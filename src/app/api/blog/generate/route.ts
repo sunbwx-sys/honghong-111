@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
 import { createPost, slugExists, getAllPosts } from '@/lib/blogService';
+import { assertCozeEnv, safeLogError } from '@/lib/utils';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: Request) {
   try {
     const { topic } = await request.json().catch(() => ({}));
+
+    // ⚠️ 环境变量预检（写入 server 日志）
+    assertCozeEnv('POST /api/blog/generate');
 
     // ⚠️ 动态 import coze SDK 并在 handler 内初始化客户端
     // 避免模块加载阶段（顶层 new Config/new LLMClient）抛异常导致平台层 500
@@ -103,7 +107,7 @@ ${existingTitles.map((t) => `- ${t}`).join('\n')}
       },
     });
   } catch (error) {
-    console.error('[API blog generate] 生成文章失败:', error);
+    safeLogError('POST /api/blog/generate', error);
     return NextResponse.json(
       {
         success: false,

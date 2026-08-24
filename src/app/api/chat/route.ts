@@ -5,6 +5,7 @@ import {
   type Option,
   MAX_ROUNDS,
 } from '@/types/game';
+import { assertCozeEnv, safeLogError, sanitizeSecrets } from '@/lib/utils';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30; // Vercel Serverless Function 最大执行时长，EdgeOne 会忽略此字段
@@ -97,6 +98,9 @@ export async function POST(request: NextRequest) {
   try {
     const body: ChatRequest = await request.json();
     const { gender, scenario, messages, affection, step, isGameOver, won } = body;
+
+    // ⚠️ 环境变量预检 —— 若缺配置写 server 日志，直接走降级，不用再抛 SDK 错误
+    const envReady = assertCozeEnv('POST /api/chat');
 
     // ⚠️ 动态 import coze SDK，避免在模块加载阶段（平台运行时不兼容）抛异常
     // 导致外层 try/catch 捕获不到、直接返回平台层 500 纯文本错误
@@ -226,14 +230,14 @@ export async function POST(request: NextRequest) {
         throw new Error('Not enough options');
       }
     } catch (parseError) {
-      console.error('Failed to parse LLM response:', parseError);
-      console.error('Raw response:', response.content);
+      safeLogError('POST /api/chat (parse LLM)', parseError);
+      console.error('[POST /api/chat] Raw response preview:', sanitizeSecrets(response.content));
       result = getFallbackResponse(affection, step, isGameOver, won);
     }
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error('Chat API error:', error);
+    safeLogError('POST /api/chat', error);
     // 降级返回默认值
     const fallback = getFallbackResponse(50, 1, false, false);
     return NextResponse.json(fallback);

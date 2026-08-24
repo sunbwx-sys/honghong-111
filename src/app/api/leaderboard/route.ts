@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getLeaderboard } from '@/lib/gameRecordService';
+import { safeLogError } from '@/lib/utils';
 
 /**
  * GET /api/leaderboard
@@ -14,7 +15,7 @@ export async function GET() {
       entries,
     });
   } catch (error: any) {
-    console.error('[Leaderboard error]', error);
+    safeLogError('GET /api/leaderboard', error);
     return NextResponse.json(
       { error: '获取排行榜失败' },
       { status: 500 }

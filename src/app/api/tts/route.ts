@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cleanTextForSpeech } from '@/lib/utils';
+import { cleanTextForSpeech, assertCozeEnv, safeLogError } from '@/lib/utils';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15; // Vercel Serverless Function 最大执行时长，EdgeOne 会忽略此字段
@@ -35,6 +35,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ⚠️ 环境变量预检（写入 server 日志）
+    assertCozeEnv('POST /api/tts');
+
     // ⚠️ 动态 import coze SDK，避免模块加载阶段抛异常导致平台层返回 500
     const { TTSClient, Config, HeaderUtils } = await import('coze-coding-dev-sdk');
 
@@ -56,7 +59,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error('TTS API error:', error);
+    safeLogError('POST /api/tts', error);
     // ⚠️ 语音生成失败不影响游戏，返回空结果
     return NextResponse.json(
       { error: 'TTS generation failed', audioUri: '', audioSize: 0 },

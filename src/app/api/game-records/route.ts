@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getUserFromToken } from '@/lib/authService';
 import { saveGameRecord, getUserRecords } from '@/lib/gameRecordService';
+import { safeLogError } from '@/lib/utils';
 
 export async function GET(request: Request) {
   try {
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
       records,
     });
   } catch (error) {
-    console.error('[Get game records error]', error);
+    safeLogError('GET /api/game-records', error);
     return NextResponse.json(
       { error: '获取游戏记录失败' },
       { status: 500 }
@@ -67,7 +68,7 @@ export async function POST(request: Request) {
       record,
     });
   } catch (error) {
-    console.error('[Save game record error]', error);
+    safeLogError('POST /api/game-records', error);
     return NextResponse.json(
       { error: '保存游戏记录失败' },
       { status: 500 }

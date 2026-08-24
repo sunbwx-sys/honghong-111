@@ -34,6 +34,29 @@ export default async function BlogPage() {
           </p>
         </div>
 
+        {posts.some((p) => p.fallback) && (
+          <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-3 flex items-start gap-3 shadow-sm">
+            <div className="flex-shrink-0 mt-0.5 text-amber-500">💡</div>
+            <div className="text-sm text-amber-800 leading-relaxed">
+              当前展示的是内置示例文章（数据库暂未连接或还没有正式内容）。
+              部署完成后系统会自动把示例写入数据库，之后文章都会从数据库读取。
+              如果你是网站管理员：
+              <ul className="list-disc ml-5 mt-1 space-y-0.5">
+                <li>确认 <span className="font-mono">DATABASE_URL</span> 已在平台后台配置</li>
+                <li>访问一下 <Link href="/api/healthcheck" className="underline hover:text-amber-900">/api/healthcheck</Link> 查看自动诊断结果</li>
+                <li>重新构建部署以让配置生效</li>
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {posts.length === 0 && (
+          <div className="text-center py-16 text-gray-400">
+            <BookOpen className="w-12 h-12 mx-auto mb-3 opacity-40" />
+            <p>暂无攻略，稍后再来看看吧～</p>
+          </div>
+        )}
+
         <div className="space-y-5">
           {posts.map((post, index) => (
             <Link
@@ -52,9 +75,16 @@ export default async function BlogPage() {
                     <BookOpen className="w-8 h-8 text-white" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h2 className="text-lg font-bold text-gray-800 group-hover:text-pink-600 transition-colors mb-2">
-                      {post.title}
-                    </h2>
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                      <h2 className="text-lg font-bold text-gray-800 group-hover:text-pink-600 transition-colors">
+                        {post.title}
+                      </h2>
+                      {post.fallback && (
+                        <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-700 text-[10px] px-2 py-0.5 font-medium border border-amber-200">
+                          示例
+                        </span>
+                      )}
+                    </div>
                     <p className="text-gray-500 text-sm line-clamp-2 mb-3">
                       {post.summary}
                     </p>

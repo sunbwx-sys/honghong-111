@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { jwtVerify } from 'jose';
 import { getUserById } from '@/lib/authService';
+import { safeLogError } from '@/lib/utils';
 
 const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || 'hong-hong-mock-secret-key-please-change-in-production'
@@ -28,7 +29,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ user: { id: user.id, username: user.username } });
   } catch (error) {
-    console.error('[Me error]', error);
+    safeLogError('GET /api/auth/me', error);
     return NextResponse.json({ user: null }, { status: 401 });
   }
 }

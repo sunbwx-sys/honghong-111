@@ -3,6 +3,8 @@
 "use strict";
 
 __turbopack_context__.s([
+    "assertCozeEnv",
+    ()=>assertCozeEnv,
     "cleanTextForSpeech",
     ()=>cleanTextForSpeech,
     "cn",
@@ -12,6 +14,7 @@ __turbopack_context__.s([
     "formatDateShort",
     ()=>formatDateShort
 ]);
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$next$40$16$2e$1$2e$1_$40$babel$2b$core$40$7$2e$28$2e$6_react$2d$dom$40$19$2e$2$2e$3_react$40$19$2e$2$2e$3_$5f$react$40$19$2e$2$2e$3$2f$node_modules$2f$next$2f$dist$2f$build$2f$polyfills$2f$process$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = /*#__PURE__*/ __turbopack_context__.i("[project]/node_modules/.pnpm/next@16.1.1_@babel+core@7.28.6_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/dist/build/polyfills/process.js [app-client] (ecmascript)");
 var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$clsx$40$2$2e$1$2e$1$2f$node_modules$2f$clsx$2f$dist$2f$clsx$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/node_modules/.pnpm/clsx@2.1.1/node_modules/clsx/dist/clsx.mjs [app-client] (ecmascript)");
 var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$tailwind$2d$merge$40$2$2e$6$2e$0$2f$node_modules$2f$tailwind$2d$merge$2f$dist$2f$bundle$2d$mjs$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/node_modules/.pnpm/tailwind-merge@2.6.0/node_modules/tailwind-merge/dist/bundle-mjs.mjs [app-client] (ecmascript)");
 ;
@@ -33,6 +36,17 @@ function formatDateFull(dateStr) {
         hour: '2-digit',
         minute: '2-digit'
     });
+}
+function assertCozeEnv(callerName) {
+    const required = [
+        'COZE_WORKLOAD_IDENTITY_API_KEY',
+        'COZE_INTEGRATION_BASE_URL',
+        'COZE_INTEGRATION_MODEL_BASE_URL'
+    ];
+    const missing = required.filter((k)=>!__TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$next$40$16$2e$1$2e$1_$40$babel$2b$core$40$7$2e$28$2e$6_react$2d$dom$40$19$2e$2$2e$3_react$40$19$2e$2$2e$3_$5f$react$40$19$2e$2$2e$3$2f$node_modules$2f$next$2f$dist$2f$build$2f$polyfills$2f$process$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["default"].env[k]);
+    if (missing.length === 0) return true;
+    console.error(`[${callerName}] ⚠️ 缺少 coze SDK 必需的环境变量：${missing.join(', ')}。` + '请在部署平台（EdgeOne Pages / Vercel）的「环境变量」设置中添加以上变量，' + '否则 AI 功能会持续走默认回复的降级逻辑。');
+    return false;
 }
 if (typeof globalThis.$RefreshHelpers$ === 'object' && globalThis.$RefreshHelpers !== null) {
     __turbopack_context__.k.registerExports(__turbopack_context__.m, globalThis.$RefreshHelpers$);

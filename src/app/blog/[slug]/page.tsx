@@ -52,12 +52,31 @@ export default async function BlogDetailPage(props: Props) {
         </Link>
 
         <header className="mb-8">
+          {post.fallback && (
+            <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 flex items-start gap-2.5 shadow-sm">
+              <span className="text-amber-500 mt-0.5">💡</span>
+              <div className="text-xs text-amber-800 leading-relaxed">
+                此文章当前来自内置示例库（数据库暂未就绪或尚未写入）。管理员可通过
+                <Link href="/api/healthcheck" className="underline mx-1 font-medium text-amber-900">
+                  /api/healthcheck
+                </Link>
+                查看自动诊断结果。
+              </div>
+            </div>
+          )}
           <div
             className={`w-full h-40 md:h-48 rounded-2xl bg-gradient-to-br ${getGradient()} mb-6 flex items-center justify-center shadow-lg`}
           >
-            <h1 className="text-2xl md:text-3xl font-bold text-white text-center px-6 drop-shadow-md">
-              {post.title}
-            </h1>
+            <div className="text-center px-6">
+              {post.fallback && (
+                <span className="inline-flex items-center rounded-full bg-white/25 backdrop-blur text-white text-[11px] px-2.5 py-0.5 mb-3 border border-white/40">
+                  示例
+                </span>
+              )}
+              <h1 className="text-2xl md:text-3xl font-bold text-white text-center px-6 drop-shadow-md">
+                {post.title}
+              </h1>
+            </div>
           </div>
           <div className="flex items-center gap-4 text-sm text-gray-400">
             <span>{post.date}</span>

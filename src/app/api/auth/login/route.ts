@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { verifyUser } from '@/lib/authService';
 import { SignJWT } from 'jose';
+import { safeLogError } from '@/lib/utils';
 
 const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || 'hong-hong-mock-secret-key-please-change-in-production'
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '登录失败';
-    console.error('[Login error]', message);
+    safeLogError('POST /api/auth/login', error);
     return NextResponse.json(
       { error: message },
       { status: 401 }

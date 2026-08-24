@@ -3,6 +3,8 @@ module.exports = [
 "use strict";
 
 __turbopack_context__.s([
+    "assertCozeEnv",
+    ()=>assertCozeEnv,
     "cleanTextForSpeech",
     ()=>cleanTextForSpeech,
     "cn",
@@ -33,6 +35,17 @@ function formatDateFull(dateStr) {
         hour: '2-digit',
         minute: '2-digit'
     });
+}
+function assertCozeEnv(callerName) {
+    const required = [
+        'COZE_WORKLOAD_IDENTITY_API_KEY',
+        'COZE_INTEGRATION_BASE_URL',
+        'COZE_INTEGRATION_MODEL_BASE_URL'
+    ];
+    const missing = required.filter((k)=>!process.env[k]);
+    if (missing.length === 0) return true;
+    console.error(`[${callerName}] ⚠️ 缺少 coze SDK 必需的环境变量：${missing.join(', ')}。` + '请在部署平台（EdgeOne Pages / Vercel）的「环境变量」设置中添加以上变量，' + '否则 AI 功能会持续走默认回复的降级逻辑。');
+    return false;
 }
 }),
 "[project]/src/components/ui/button.tsx [app-ssr] (ecmascript)", ((__turbopack_context__) => {

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { registerUser } from '@/lib/authService';
 import { SignJWT } from 'jose';
+import { safeLogError, sanitizeSecrets } from '@/lib/utils';
 
 const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || 'hong-hong-mock-secret-key-please-change-in-production'
@@ -33,7 +34,8 @@ async function verifyTurnstile(token: string, remoteip?: string): Promise<boolea
     const data = await res.json();
     return data.success === true;
   } catch (err) {
-    console.error('[Turnstile] 校验异常:', err);
+    // 用 sanitizeSecrets 确保不会把 formData 的 secret 打出来
+    console.error('[Turnstile] 校验异常:', sanitizeSecrets(err));
     return false;
   }
 }
@@ -83,7 +85,7 @@ export async function POST(request: Request) {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '注册失败';
-    console.error('[Register error]', message);
+    safeLogError('POST /api/auth/register', error);
     return NextResponse.json(
       { error: message },
       { status: 400 }
