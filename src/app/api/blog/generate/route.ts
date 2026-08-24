@@ -1,13 +1,17 @@
 import { NextResponse } from 'next/server';
-import { LLMClient, Config } from 'coze-coding-dev-sdk';
 import { createPost, slugExists, getAllPosts } from '@/lib/blogService';
 
-const config = new Config();
-const llmClient = new LLMClient(config);
+export const runtime = 'nodejs';
 
 export async function POST(request: Request) {
   try {
     const { topic } = await request.json().catch(() => ({}));
+
+    // ⚠️ 动态 import coze SDK 并在 handler 内初始化客户端
+    // 避免模块加载阶段（顶层 new Config/new LLMClient）抛异常导致平台层 500
+    const { LLMClient, Config } = await import('coze-coding-dev-sdk');
+    const config = new Config();
+    const llmClient = new LLMClient(config);
 
     // 获取已有文章标题，避免重复
     const existingPosts = await getAllPosts();

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "functions": {
+    "/api/blog/generate": {},
+    "/api/chat": {
+      "maxDuration": 30
+    },
+    "/api/tts": {
+      "maxDuration": 15
+    }
+  }
+}

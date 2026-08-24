@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { LLMClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
 import {
   type Gender,
   type Message,
@@ -8,7 +7,7 @@ import {
 } from '@/types/game';
 
 export const runtime = 'nodejs';
-export const maxDuration = 30;
+export const maxDuration = 30; // Vercel Serverless Function 最大执行时长，EdgeOne 会忽略此字段
 
 interface ChatRequest {
   gender: Gender;
@@ -98,6 +97,10 @@ export async function POST(request: NextRequest) {
   try {
     const body: ChatRequest = await request.json();
     const { gender, scenario, messages, affection, step, isGameOver, won } = body;
+
+    // ⚠️ 动态 import coze SDK，避免在模块加载阶段（平台运行时不兼容）抛异常
+    // 导致外层 try/catch 捕获不到、直接返回平台层 500 纯文本错误
+    const { LLMClient, Config, HeaderUtils } = await import('coze-coding-dev-sdk');
 
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const config = new Config({ timeout: 30000 });

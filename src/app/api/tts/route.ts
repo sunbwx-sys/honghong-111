@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { TTSClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
 import { cleanTextForSpeech } from '@/lib/utils';
 
 export const runtime = 'nodejs';
-export const maxDuration = 15;
+export const maxDuration = 15; // Vercel Serverless Function 最大执行时长，EdgeOne 会忽略此字段
 
 interface TTSRequest {
   text: string;
@@ -35,6 +34,9 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+
+    // ⚠️ 动态 import coze SDK，避免模块加载阶段抛异常导致平台层返回 500
+    const { TTSClient, Config, HeaderUtils } = await import('coze-coding-dev-sdk');
 
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const config = new Config({ timeout: 15000 });
