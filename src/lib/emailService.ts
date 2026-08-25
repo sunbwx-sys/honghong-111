@@ -45,14 +45,44 @@ export function isEmailLike(s: string): boolean {
   return true;
 }
 
+/** 去除字符串首尾的半角/全角引号、空白、斜引号，避免用户在环境变量里粘贴出格式问题 */
+function stripQuotesAndTrim(s: string | undefined | null): string {
+  if (!s) return '';
+  let out = s.trim();
+  // 重复剥离，直到首尾不再是引号类字符
+  let prev: string;
+  do {
+    prev = out;
+    out = out.replace(/^[\s"'`'"]+|[\s"'`'"]+$/g, '');
+  } while (out !== prev);
+  return out;
+}
+
+function resolveFromFields(): { fromName: string; fromAddr: string; from: string } {
+  const rawName = stripQuotesAndTrim(process.env.RESEND_FROM_NAME);
+  const rawAddr = stripQuotesAndTrim(process.env.RESEND_FROM_EMAIL);
+  const fromName = rawName || '哄哄模拟器';
+  const fromAddr = rawAddr || 'onboarding@resend.dev';
+  // RFC 5322: 当 display name 包含非 ASCII 字符（"哄哄模拟器"是中文）时，Resend 会自动处理 MIME encoded-word，
+  // 我们这里不需要额外转义，只要保证没有多余引号就行。
+  const from = `${fromName} <${fromAddr}>`;
+  return { fromName, fromAddr, from };
+}
+
 /**
  * 发送"注册成功欢迎邮件"。
+ *
+ * ⚠️ 重要：Serverless（Vercel / EdgeOne / Netlify Functions）环境下，
+ * HTTP 响应返回后进程立刻会被冷冻/销毁，fire-and-forget（不 await）的任务
+ * 大概率来不及执行 → 邮件根本不会发。**请调用方务必 await 本函数后再 return 响应！**
+ * 为了不阻塞用户体验太久，调用方可用 Promise.race 加一个 6-8 秒的超时兜底。
  *
  * @returns true 表示发送请求成功（不保证对方一定收到，Resend 异步投递），
  *          false 表示被跳过 / 未配置 / 发送失败，都属于"非致命错误"。
  *          本函数**永远不会 throw**。
  */
 export async function sendWelcomeEmail(username: string): Promise<boolean> {
+  const startTimeMs = Date.now();
   try {
     if (!isEmailLike(username)) {
       // 用户名不是邮箱 → 静默跳过
@@ -68,9 +98,7 @@ export async function sendWelcomeEmail(username: string): Promise<boolean> {
       return false;
     }
 
-    const fromName = process.env.RESEND_FROM_NAME || '哄哄模拟器';
-    const fromAddr = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
-    const from = `${fromName} <${fromAddr}>`;
+    const { fromName, fromAddr, from } = resolveFromFields();
 
     const subject = '欢迎来挑战 哄哄模拟器 🎀';
     const html = `
@@ -88,6 +116,10 @@ export async function sendWelcomeEmail(username: string): Promise<boolean> {
     `.trim();
     const text = `亲爱的 ${email} 你好，欢迎你来挑战，你能十轮哄好生气的对象吗？`;
 
+    console.log(
+      `[Email] 开始发送欢迎邮件 → to=${email}  from="${fromName}" <${fromAddr}>`,
+    );
+
     const resp = await resend.emails.send({
       from,
       to: [email],
@@ -98,32 +130,44 @@ export async function sendWelcomeEmail(username: string): Promise<boolean> {
 
     // Resend SDK 返回对象：{ data: { id: string } } 或 { error: {...} }
     if ((resp as { error?: unknown }).error) {
+      const elapsed = Date.now() - startTimeMs;
       safeLogError(
-        `[Email] Resend 返回错误 → ${email}`,
+        `[Email] Resend 返回错误（${elapsed}ms） → ${email}`,
         sanitizeSecrets((resp as { error: unknown }).error),
       );
       return false;
     }
     const id = (resp as { data?: { id?: string } }).data?.id;
-    console.log(`[Email] 欢迎邮件已提交 Resend → ${email} (id=${id || 'unknown'})`);
+    const elapsed = Date.now() - startTimeMs;
+    console.log(
+      `[Email] 欢迎邮件已提交 Resend（${elapsed}ms） → ${email}  id=${id || 'unknown'}`,
+    );
     return true;
   } catch (err) {
+    const elapsed = Date.now() - startTimeMs;
     // 最高级兜底：任何异常都不能向上抛（保证注册不被影响）
-    safeLogError('[Email] sendWelcomeEmail 异常（已吞掉，不影响注册）', err);
+    safeLogError(
+      `[Email] sendWelcomeEmail 异常（${elapsed}ms，已吞掉，不影响注册）`,
+      err,
+    );
     return false;
   }
 }
 
 /** 检查 Resend 当前是否可用（有 API key + SDK 初始化成功），用于健康检查 */
-export function isEmailServiceReady(): { configured: boolean; fromAddress: string } {
+export function isEmailServiceReady(): {
+  configured: boolean;
+  fromAddress: string;
+  fromName: string;
+  fromEmail: string;
+} {
   const client = getResend();
-  const fromAddr =
-    (process.env.RESEND_FROM_NAME
-      ? `${process.env.RESEND_FROM_NAME} <${process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'}>`
-      : process.env.RESEND_FROM_EMAIL) || 'onboarding@resend.dev';
+  const { fromName, fromAddr, from } = resolveFromFields();
   return {
     configured: client !== null,
-    fromAddress: fromAddr,
+    fromAddress: from,
+    fromName,
+    fromEmail: fromAddr,
   };
 }
 

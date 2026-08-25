@@ -79,17 +79,28 @@ export async function POST(request: Request) {
     const user = await registerUser(username, password);
     const token = await generateToken(user.id, user.username);
 
-    // ⚠️ 发欢迎邮件（仅当用户名是邮箱时才发送）
-    // —— 关键安全策略：fire-and-forget（不 await），邮件发送失败绝对不影响注册
-    //    且 sendWelcomeEmail 内部已经 try/catch 吸收了所有异常，双保险
-    void (async () => {
-      try {
-        await sendWelcomeEmail(user.username);
-      } catch (err) {
-        // 第三层兜底：理论上永远不会进入这里（sendWelcomeEmail 自己就全 catch 了）
-        safeLogError('[Register] 欢迎邮件异步流程异常（已吞）', err);
-      }
-    })();
+    // ⚠️ 发送欢迎邮件（用户名是邮箱时才发）
+    // —— 关键：Serverless/EdgeOne 环境下 response 返回后进程会被立即冷冻，
+    //    绝对不能 fire-and-forget（void），否则邮件根本来不及发出。
+    //    这里用 Promise.race + 6 秒超时兜底：Resend 一般 300–800ms 返回，
+    //    就算网络异常也最多等 6 秒，不会拖垮注册体验；任何错误都被内部吞掉，仍继续成功返回。
+    const emailTimeoutMs = 6000;
+    try {
+      await Promise.race([
+        sendWelcomeEmail(user.username),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => {
+            console.log(
+              `[Register] 欢迎邮件发送超过 ${emailTimeoutMs}ms，放弃等待直接返回注册成功（邮件可能仍在后台投递）`,
+            );
+            resolve(false);
+          }, emailTimeoutMs),
+        ),
+      ]);
+    } catch (err) {
+      // 最外层理论不会到这里（sendWelcomeEmail 内部已经 catch 完了），但再兜一层更保险
+      safeLogError('[Register] 等待欢迎邮件时外层异常（已吞，不影响注册）', err);
+    }
 
     return NextResponse.json({
       success: true,
