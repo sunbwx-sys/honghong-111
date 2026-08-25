@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { registerUser } from '@/lib/authService';
 import { SignJWT } from 'jose';
 import { safeLogError, sanitizeSecrets } from '@/lib/utils';
+import { sendWelcomeEmail } from '@/lib/emailService';
 
 const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || 'hong-hong-mock-secret-key-please-change-in-production'
@@ -77,6 +78,18 @@ export async function POST(request: Request) {
 
     const user = await registerUser(username, password);
     const token = await generateToken(user.id, user.username);
+
+    // ⚠️ 发欢迎邮件（仅当用户名是邮箱时才发送）
+    // —— 关键安全策略：fire-and-forget（不 await），邮件发送失败绝对不影响注册
+    //    且 sendWelcomeEmail 内部已经 try/catch 吸收了所有异常，双保险
+    void (async () => {
+      try {
+        await sendWelcomeEmail(user.username);
+      } catch (err) {
+        // 第三层兜底：理论上永远不会进入这里（sendWelcomeEmail 自己就全 catch 了）
+        safeLogError('[Register] 欢迎邮件异步流程异常（已吞）', err);
+      }
+    })();
 
     return NextResponse.json({
       success: true,

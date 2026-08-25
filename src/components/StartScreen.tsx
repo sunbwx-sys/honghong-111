@@ -16,6 +16,7 @@ import {
   type VoiceType,
   type Scenario,
 } from '@/types/game';
+import { blessAudioOnUserGesture } from '@/lib/audioPlayer';
 
 type SceneMode = 'preset' | 'custom';
 
@@ -79,25 +80,12 @@ export default function StartScreen() {
   const canStart =
     gameState.gender && gameState.scenario && gameState.voiceType && !isStarting;
 
-  // 提前解锁移动端自动播放权限：用一段极小的静音 dataURI 音频播放一次
-  // （iOS Safari / Android Chrome 都要求先有用户手势触发过 play 才允许后续自动播）
-  const unlockAutoplay = () => {
-    try {
-      // 0.01s 单声道 8kHz 静音 WAV dataURI
-      const silentWav =
-        'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=';
-      const a = new Audio(silentWav);
-      a.volume = 0;
-      a.preload = 'auto';
-      a.play().catch(() => {});
-    } catch {
-      // 忽略任何错误，不影响开始流程
-    }
-  };
-
+  // 提前解锁移动端（尤其是 iOS Safari）自动播放权限。
+  // ⚠️ 必须在用户 click 手势的同步调用栈里执行（不能 await 之后），
+  // 否则 iOS Safari 不会将其识别为"用户主动触发音频"。
   const handleStart = () => {
     if (!canStart) return;
-    unlockAutoplay();
+    blessAudioOnUserGesture();
     setIsStarting(true);
     startGame();
   };

@@ -14,6 +14,11 @@ import {
   MIN_AFFECTION,
   type Message,
 } from '@/types/game';
+import {
+  blessAudioOnUserGesture,
+  playWithWebAudio,
+  stopActivePlayback,
+} from '@/lib/audioPlayer';
 
 // ⚠️ 清理文本中的括号和动作描述
 function cleanTextForSpeech(text: string): string {
@@ -51,20 +56,8 @@ export default function GameScreen() {
   const isGeneratingRef = useRef(false);
   const lastGeneratedMessageCountRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // audioRef 保留给 HTMLAudio 降级路径使用；主路径用 audioPlayer.ts 里的全局 currentPlayback
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  // 用一个 0.01s 的静音 WAV 在用户手势下播放一次，用于解锁移动端自动播放权限
-  const unlockAutoplay = useCallback(() => {
-    try {
-      const silentWav =
-        'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=';
-      const a = new Audio(silentWav);
-      a.volume = 0;
-      a.play().catch(() => {});
-    } catch {
-      // ignore
-    }
-  }, []);
 
   const lastPartnerMessage = gameState.messages.findLast(
     (m) => m.role === 'partner',
@@ -217,26 +210,72 @@ export default function GameScreen() {
           if (response.ok) {
             const data = await response.json();
             if (data.audioUri) {
-              setAudioUri(data.audioUri);
+              const uri = data.audioUri;
+              setAudioUri(uri);
               // ⚠️ 自动播放语音（如果未静音）
+              // 注意：这里是在 await 网络返回后调用，iOS Safari 下依赖
+              // 之前用户手势（开始游戏 / 选选项）里 blessAudioOnUserGesture()
+              // 给全局 AudioContext 的"永久祝福"。一旦祝福过，无论等
+              // 5 秒还是 30 秒，playWithWebAudio() 都能自动开播。
               if (!isMuted) {
                 setTimeout(() => {
-                  const audio = new Audio(data.audioUri);
-                  audioRef.current = audio;
-                  audio.onplay = () => {
-                    setIsPlaying(true);
-                    setNeedsManualPlay(false);
-                  };
-                  audio.onended = () => setIsPlaying(false);
-                  audio.onerror = () => {
-                    setIsPlaying(false);
-                    setNeedsManualPlay(true);
-                  };
-                  audio.play().catch(() => {
-                    setIsPlaying(false);
-                    // 自动播放被浏览器阻止 → 提示用户手动点击播放
-                    setNeedsManualPlay(true);
-                  });
+                  void (async () => {
+                    // 优先 Web Audio API
+                    try {
+                      await playWithWebAudio(uri, {
+                        onPlay: () => {
+                          setIsPlaying(true);
+                          setNeedsManualPlay(false);
+                        },
+                        onEnded: () => setIsPlaying(false),
+                        onError: () => {
+                          setIsPlaying(false);
+                          // Web Audio 失败 → 降级 HTMLAudio
+                          try {
+                            const audio = new Audio(uri);
+                            audioRef.current = audio;
+                            audio.onplay = () => {
+                              setIsPlaying(true);
+                              setNeedsManualPlay(false);
+                            };
+                            audio.onended = () => setIsPlaying(false);
+                            audio.onerror = () => {
+                              setIsPlaying(false);
+                              setNeedsManualPlay(true);
+                            };
+                            audio.play().catch(() => {
+                              setIsPlaying(false);
+                              setNeedsManualPlay(true);
+                            });
+                          } catch {
+                            setNeedsManualPlay(true);
+                          }
+                        },
+                      });
+                    } catch {
+                      // Web Audio 抛错 → 同 onError 降级
+                      try {
+                        const audio = new Audio(uri);
+                        audioRef.current = audio;
+                        audio.onplay = () => {
+                          setIsPlaying(true);
+                          setNeedsManualPlay(false);
+                        };
+                        audio.onended = () => setIsPlaying(false);
+                        audio.onerror = () => {
+                          setIsPlaying(false);
+                          setNeedsManualPlay(true);
+                        };
+                        audio.play().catch(() => {
+                          setIsPlaying(false);
+                          setNeedsManualPlay(true);
+                        });
+                      } catch {
+                        setIsPlaying(false);
+                        setNeedsManualPlay(true);
+                      }
+                    }
+                  })();
                 }, 300);
               }
             }
@@ -259,56 +298,81 @@ export default function GameScreen() {
     isMuted,
   ]);
 
-  // 播放语音
-  const handlePlayAudio = useCallback(() => {
+  // 播放语音（优先 Web Audio API → iOS Safari 整页永久解锁；失败再降级 HTMLAudio）
+  const handlePlayAudio = useCallback(async () => {
     if (!audioUri) return;
 
+    // 1) 停止当前播放
+    stopActivePlayback();
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
     }
-
-    // 用户手动点击播放 → 这也是用户手势，同时再解锁一次自动播放权限
-    unlockAutoplay();
+    // 2) 在用户手势栈里永久解锁 AudioContext（尤其 iOS）
+    blessAudioOnUserGesture();
     setNeedsManualPlay(false);
 
-    const audio = new Audio(audioUri);
-    audioRef.current = audio;
-
-    audio.onplay = () => setIsPlaying(true);
-    audio.onended = () => setIsPlaying(false);
-    audio.onerror = () => setIsPlaying(false);
-
-    audio.play().catch(() => {
-      setIsPlaying(false);
-    });
-  }, [audioUri, unlockAutoplay]);
+    // 3) 优先走 Web Audio API（iOS Safari 永久解锁，不用等手势）
+    try {
+      await playWithWebAudio(audioUri, {
+        onPlay: () => setIsPlaying(true),
+        onEnded: () => setIsPlaying(false),
+        onError: () => setIsPlaying(false),
+      });
+      return;
+    } catch {
+      // 4) Web Audio 失败 → 降级到 HTMLAudio（兜底用，PC/Android 能播）
+      try {
+        const audio = new Audio(audioUri);
+        audioRef.current = audio;
+        audio.onplay = () => setIsPlaying(true);
+        audio.onended = () => setIsPlaying(false);
+        audio.onerror = () => {
+          setIsPlaying(false);
+          setNeedsManualPlay(true);
+        };
+        await audio.play();
+        return;
+      } catch {
+        // 5) 彻底失败 → 闪烁提示用户手动点
+        setIsPlaying(false);
+        setNeedsManualPlay(true);
+      }
+    }
+  }, [audioUri]);
 
   // 切换静音
   const handleToggleMute = useCallback(() => {
     setIsMuted((prev) => {
       const newMuted = !prev;
-      unlockAutoplay(); // 点静音按钮也是用户手势 → 顺手解锁
-      if (newMuted && audioRef.current) {
-        audioRef.current.pause();
+      // 点静音按钮也是用户手势 → 顺手把 AudioContext 永久解锁
+      blessAudioOnUserGesture();
+      if (newMuted) {
+        stopActivePlayback();
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current = null;
+        }
         setIsPlaying(false);
-      } else if (!newMuted && audioUri) {
+      } else if (audioUri) {
         // 取消静音后自动播放当前语音
         handlePlayAudio();
       }
       return newMuted;
     });
-  }, [audioUri, handlePlayAudio, unlockAutoplay]);
+  }, [audioUri, handlePlayAudio]);
 
   // 选择选项
   const handleSelectOption = useCallback(
     (option: Option) => {
       if (isLoading || gameState.gameOver) return;
 
-      // ⚠️ 选选项是用户手势 → 先解锁自动播放权限，保证下一轮对方语音能自动播
-      unlockAutoplay();
+      // ⚠️ 选选项是用户手势 → 在同步栈里先"祝福"AudioContext
+      // 保证 5–15 秒之后 TTS 网络回来时也能自动播（iOS Safari 的关键）
+      blessAudioOnUserGesture();
 
       // ⚠️ 重置语音状态
+      stopActivePlayback();
       setAudioUri(undefined);
       setCurrentAudioMessageId(null);
       setIsPlaying(false);
@@ -320,7 +384,7 @@ export default function GameScreen() {
 
       selectOption(option);
     },
-    [isLoading, gameState.gameOver, selectOption, unlockAutoplay],
+    [isLoading, gameState.gameOver, selectOption],
   );
 
   // 自定义回复：固定 +10 分，复用选项提交流程

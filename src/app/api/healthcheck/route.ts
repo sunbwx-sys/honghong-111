@@ -5,6 +5,7 @@ import {
   getLastDbInitError,
 } from '@/storage/database/db';
 import { assertCozeEnv } from '@/lib/utils';
+import { isEmailServiceReady } from '@/lib/emailService';
 
 export const runtime = 'nodejs';
 
@@ -43,5 +44,15 @@ export async function GET() {
         ? '✅ 三个环境变量都已配置（本接口不打印具体值）。若仍无 AI 回复请查看函数日志。'
         : '❌ 缺少一个或多个 COZE 环境变量，请在部署平台后台配置后重新部署。',
     },
+    email: (() => {
+      const s = isEmailServiceReady();
+      return {
+        configured: s.configured,
+        fromAddress: s.fromAddress,
+        hint: s.configured
+          ? '✅ RESEND_API_KEY 已配置，用户名是邮箱的新用户注册时会发送欢迎邮件。'
+          : '⚠️ RESEND_API_KEY 未配置 → 注册时不会发送欢迎邮件，但不影响注册功能。若要发信，请到部署平台后台配置 RESEND_API_KEY。',
+      };
+    })(),
   });
 }
