@@ -79,8 +79,25 @@ export default function StartScreen() {
   const canStart =
     gameState.gender && gameState.scenario && gameState.voiceType && !isStarting;
 
+  // 提前解锁移动端自动播放权限：用一段极小的静音 dataURI 音频播放一次
+  // （iOS Safari / Android Chrome 都要求先有用户手势触发过 play 才允许后续自动播）
+  const unlockAutoplay = () => {
+    try {
+      // 0.01s 单声道 8kHz 静音 WAV dataURI
+      const silentWav =
+        'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=';
+      const a = new Audio(silentWav);
+      a.volume = 0;
+      a.preload = 'auto';
+      a.play().catch(() => {});
+    } catch {
+      // 忽略任何错误，不影响开始流程
+    }
+  };
+
   const handleStart = () => {
     if (!canStart) return;
+    unlockAutoplay();
     setIsStarting(true);
     startGame();
   };

@@ -43,6 +43,8 @@ export default function GameScreen() {
   const [audioUri, setAudioUri] = useState<string | undefined>(undefined);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  // 语音已加载但被浏览器自动播放策略阻止，需提示用户手动点击播放
+  const [needsManualPlay, setNeedsManualPlay] = useState(false);
   const [currentAudioMessageId, setCurrentAudioMessageId] = useState<string | null>(null);
   const [customInput, setCustomInput] = useState('');
 
@@ -50,6 +52,19 @@ export default function GameScreen() {
   const lastGeneratedMessageCountRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // 用一个 0.01s 的静音 WAV 在用户手势下播放一次，用于解锁移动端自动播放权限
+  const unlockAutoplay = useCallback(() => {
+    try {
+      const silentWav =
+        'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=';
+      const a = new Audio(silentWav);
+      a.volume = 0;
+      a.play().catch(() => {});
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const lastPartnerMessage = gameState.messages.findLast(
     (m) => m.role === 'partner',
@@ -180,6 +195,7 @@ export default function GameScreen() {
       setAudioUri(undefined);
       setCurrentAudioMessageId(messageId);
       setIsPlaying(false);
+      setNeedsManualPlay(false);
 
       const voiceConfig = VOICE_CONFIG[gameState.voiceType];
       const cleanText = cleanTextForSpeech(lastPartnerMessage.content);
@@ -207,11 +223,19 @@ export default function GameScreen() {
                 setTimeout(() => {
                   const audio = new Audio(data.audioUri);
                   audioRef.current = audio;
-                  audio.onplay = () => setIsPlaying(true);
+                  audio.onplay = () => {
+                    setIsPlaying(true);
+                    setNeedsManualPlay(false);
+                  };
                   audio.onended = () => setIsPlaying(false);
-                  audio.onerror = () => setIsPlaying(false);
+                  audio.onerror = () => {
+                    setIsPlaying(false);
+                    setNeedsManualPlay(true);
+                  };
                   audio.play().catch(() => {
                     setIsPlaying(false);
+                    // 自动播放被浏览器阻止 → 提示用户手动点击播放
+                    setNeedsManualPlay(true);
                   });
                 }, 300);
               }
@@ -244,6 +268,10 @@ export default function GameScreen() {
       audioRef.current = null;
     }
 
+    // 用户手动点击播放 → 这也是用户手势，同时再解锁一次自动播放权限
+    unlockAutoplay();
+    setNeedsManualPlay(false);
+
     const audio = new Audio(audioUri);
     audioRef.current = audio;
 
@@ -254,12 +282,13 @@ export default function GameScreen() {
     audio.play().catch(() => {
       setIsPlaying(false);
     });
-  }, [audioUri]);
+  }, [audioUri, unlockAutoplay]);
 
   // 切换静音
   const handleToggleMute = useCallback(() => {
     setIsMuted((prev) => {
       const newMuted = !prev;
+      unlockAutoplay(); // 点静音按钮也是用户手势 → 顺手解锁
       if (newMuted && audioRef.current) {
         audioRef.current.pause();
         setIsPlaying(false);
@@ -269,17 +298,21 @@ export default function GameScreen() {
       }
       return newMuted;
     });
-  }, [audioUri, handlePlayAudio]);
+  }, [audioUri, handlePlayAudio, unlockAutoplay]);
 
   // 选择选项
   const handleSelectOption = useCallback(
     (option: Option) => {
       if (isLoading || gameState.gameOver) return;
 
+      // ⚠️ 选选项是用户手势 → 先解锁自动播放权限，保证下一轮对方语音能自动播
+      unlockAutoplay();
+
       // ⚠️ 重置语音状态
       setAudioUri(undefined);
       setCurrentAudioMessageId(null);
       setIsPlaying(false);
+      setNeedsManualPlay(false);
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
@@ -287,7 +320,7 @@ export default function GameScreen() {
 
       selectOption(option);
     },
-    [isLoading, gameState.gameOver, selectOption],
+    [isLoading, gameState.gameOver, selectOption, unlockAutoplay],
   );
 
   // 自定义回复：固定 +10 分，复用选项提交流程
@@ -407,20 +440,34 @@ export default function GameScreen() {
                       className={`absolute -bottom-5 left-0 w-6 h-6 rounded-full flex items-center justify-center transition-all ${
                         isPlaying
                           ? 'bg-pink-500 text-white'
-                          : 'bg-gray-100 text-gray-400 hover:bg-pink-100 hover:text-pink-500'
+                          : needsManualPlay
+                            ? 'bg-pink-500 text-white shadow-[0_0_0_3px_rgba(236,72,153,0.25)] animate-[pulse_1.2s_ease-in-out_infinite]'
+                            : 'bg-gray-100 text-gray-400 hover:bg-pink-100 hover:text-pink-500'
                       }`}
-                      title={isPlaying ? '播放中' : '重新播放'}
+                      title={
+                        isPlaying
+                          ? '播放中'
+                          : needsManualPlay
+                            ? '点我播放语音（浏览器阻止了自动播放）'
+                            : '重新播放'
+                      }
                     >
-                      <Volume2 className="w-3.5 h-3.5" />
+                      {needsManualPlay ? (
+                        <VolumeX className="w-3.5 h-3.5" />
+                      ) : isPlaying ? (
+                        <Volume2 className="w-3.5 h-3.5" />
+                      ) : (
+                        <Volume2 className="w-3.5 h-3.5" />
+                      )}
                     </button>
                   )}
               </div>
 
-              {/* 用户头像 - 动漫风格 */}
+              {/* 用户头像 - 动漫风格（和对方相反） */}
               {message.role === 'user' && (
                 <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-blue-200 shrink-0 bg-blue-100">
                   <img
-                    src="/avatar-boy.png"
+                    src={gameState.gender === 'female' ? '/avatar-boy.png' : '/avatar-girl.png'}
                     alt="我"
                     className="w-full h-full object-cover"
                   />

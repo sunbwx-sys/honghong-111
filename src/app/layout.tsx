@@ -19,12 +19,20 @@ export const metadata: Metadata = {
     '互动游戏',
   ],
   authors: [{ name: '哄哄模拟器' }],
+  icons: {
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+    ],
+    shortcut: ['/icon.svg'],
+    apple: [{ url: '/icon.svg' }],
+  },
   openGraph: {
     title: '哄哄模拟器 - 10轮对话哄好生气的TA',
     description:
       '一款情侣互动小游戏，AI扮演生气的对象，通过选择对话在10轮内把对方哄好。',
     locale: 'zh_CN',
     type: 'website',
+    images: ['/icon.svg'],
   },
 };
 
