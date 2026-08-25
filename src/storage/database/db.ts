@@ -1,6 +1,5 @@
-import { drizzle } from 'drizzle-orm/node-postgres';
-import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { Pool, type PoolClient } from 'pg';
+import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import postgres, { type Sql } from 'postgres';
 import 'dotenv/config';
 import { safeLogError, sanitizeSecrets } from '@/lib/utils';
 import * as Schema from './shared/schema';
@@ -8,45 +7,40 @@ import * as Schema from './shared/schema';
 // re-export schema tables 方便外部调用时不需要 import 两份
 export { Schema };
 
-let _pool: Pool | null = null;
+let _client: Sql | null = null;
 let _db: PostgresJsDatabase<typeof Schema> | null = null;
 let _initPromise: Promise<void> | null = null;
 let _lastInitError: Error | null = null;
 
 /**
  * 打印 DATABASE_URL 的友好摘要（不泄漏密码）。
- *   postgresql://user:password@host:port/db  →  postgresql://user:***@host:port/db
- *   未配置 →  "[未设置]"
  */
 export function describeDatabaseUrl(): string {
   const url = process.env.DATABASE_URL;
   if (!url) return '[未设置]';
   try {
-    // 用 URL 解析比正则更安全
     const u = new URL(url);
-    // password 可能含特殊字符，但 URL.password 会转码，所以只 mask 掉
     if (u.password) u.password = '***';
-    // 如果没有 password（aws rds / neon 等带 ?sslmode= 的形式），保留原样
     return sanitizeSecrets(u.toString());
   } catch {
-    // 解析失败时走兜底正则脱敏
     return sanitizeSecrets(url);
   }
 }
 
 /**
- * 惰性创建 Pool。
- * 旧版 db.ts 在模块顶层同步抛 `throw new Error('DATABASE_URL 未设置')` ——
- * 这会导致在 Serverless Function 冷启动阶段就直接 500，连 try/catch
- * 和错误日志都走不到，排障非常痛苦。
+ * 创建 postgres.js 客户端（纯 JS，零 native 依赖）。
  *
- * 现在改成：在第一次调用 getPool() / getDb() 时才真正创建，失败时写入
- * 结构化日志（含完整 err.code / err.message），方便在 EdgeOne / Vercel 的
- * 日志面板里一眼看出是「未配置 env」「DNS 解析失败」「TLS 握手失败」
- * 「pg_hba 拒绝」「max_connections 用尽」等具体原因。
+ * 使用 `postgres` 包（作者 porsager，最新 v3）的原因：
+ *   之前用的 `pg` 包在 EdgeOne Pages（腾讯云 Turbopack 构建）上会被声明成
+ *   hash 名的 external 模块（如 `pg-fcd9a938146891af` /
+ *   `drizzle-orm-9cc018771e89c319/node-postgres`），
+ *   运行时在 Node 20 环境里找不到这些 hash 包 → 直接 ERR_MODULE_NOT_FOUND → 500。
+ *
+ *   postgres 包是纯 JavaScript 实现（没有任何 native 扩展 / 可选依赖），
+ *   用 Node.js 自带的 net/tls 完成 TCP 通信，彻底绕开这类 hash 命名问题。
  */
-export function createPool(): Pool {
-  if (_pool) return _pool;
+export function createClient(): Sql {
+  if (_client) return _client;
 
   if (!process.env.DATABASE_URL) {
     const msg =
@@ -59,49 +53,48 @@ export function createPool(): Pool {
   }
 
   console.log(
-    `[DB] 正在创建连接池，目标：${describeDatabaseUrl()}`,
+    `[DB] 正在创建 postgres.js 客户端（纯 JS），目标：${describeDatabaseUrl()}`,
   );
 
   try {
-    const pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: {
-        rejectUnauthorized: false,
+    // postgres.js 的 ssl 默认是 'prefer'，对 Neon/Supabase/Railway 等托管 PG
+    // 需要强制 'require'，对本地开发（localhost）会自动降级为不加密。
+    // 这里用一个简单的启发式判断：URL 含 localhost/127.0.1/本地私有网段时不强制 SSL。
+    const url = process.env.DATABASE_URL;
+    const hostMatch = url.match(/@([^:/?]+)/);
+    const host = hostMatch ? hostMatch[1] : '';
+    const isLocalHost = /^(localhost|127\.0\.0\.1|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(host);
+    const ssl = isLocalHost ? 'prefer' : 'require';
+
+    const client = postgres(url, {
+      ssl,
+      max: 5,
+      idle_timeout: 15,
+      connect_timeout: 10,
+      // postgres.js 默认使用 UTC 时区，兼容 drizzle-orm
+      transform: {
+        undefined: null,
       },
-      max: 5, // Serverless 环境下不要贪大，5 够用了
-      idleTimeoutMillis: 15000,
-      connectionTimeoutMillis: 10000,
     });
 
-    // 监听底层错误（例如后端连接断掉），统一走安全日志
-    pool.on('error', (err) => {
-      // 只看 pg 的 error 常用字段，避免 axios 风格 header 带秘密
-      safeLogError('DB Pool error', {
-        name: err.name,
-        message: err.message,
-        code: (err as any).code,
-        routine: (err as any).routine,
-      });
-    });
-
-    _pool = pool;
+    _client = client;
     _lastInitError = null;
-    console.log('[DB] ✅ 连接池创建成功（尚未实际连接，首次查询时建立）');
-    return pool;
+    console.log(`[DB] ✅ postgres.js 客户端创建成功（ssl=${ssl}，host=${host}）`);
+    return client;
   } catch (err) {
-    safeLogError('createPool', err);
+    safeLogError('createClient (postgres.js)', err);
     _lastInitError = err instanceof Error ? err : new Error(String(err));
     throw _lastInitError;
   }
 }
 
-export function getPool(): Pool {
-  return _pool ?? createPool();
+export function getClient(): Sql {
+  return _client ?? createClient();
 }
 
 export function getDb(): PostgresJsDatabase<typeof Schema> {
   if (_db) return _db;
-  _db = drizzle(getPool());
+  _db = drizzle(getClient(), { schema: Schema });
   return _db;
 }
 
@@ -112,8 +105,6 @@ export const db = new Proxy<PostgresJsDatabase<typeof Schema>>({} as any, {
     return (realDb as any)[prop];
   },
 });
-
-export { _pool as __poolInternalForTest };
 
 // ---------------------------------------------------------------------------
 // 建表 & 初始化种子数据：ensureDbReady()
@@ -156,58 +147,69 @@ const CREATE_TABLES_SQL = [
 export interface DbReadyReport {
   ok: boolean;
   migrated: boolean;
-  seeded: number; // 本次新写入了多少条 seed blog
+  seeded: number;
   error?: { name: string; message: string; code?: string };
 }
 
 /**
  * 在应用启动或 /api/healthcheck 被调用时跑一次：
  *   1. SELECT 1 验证连通性
- *   2. 执行 CREATE TABLE IF NOT EXISTS 保证表存在（不需要用户手动跑 migrate）
- *   3. 如果 blog_posts 表为空，写入内置 3 篇示例文章（src/data/blogPosts.ts）
+ *   2. 执行 CREATE TABLE IF NOT EXISTS 保证表存在
+ *   3. 如果 blog_posts 表为空，写入内置 3 篇示例文章
  *
  * 幂等：调用多次也不会重复创建/重复插入。
  */
 export async function ensureDbReady(force = false): Promise<DbReadyReport> {
-  // 非 force 模式下，同一进程只做一次
-  if (!force && _initPromise) return _initPromise.then(() => ({ ok: true, migrated: true, seeded: 0 }));
+  if (!force && _initPromise) {
+    // 上一次初始化仍在进行：等待它；上一次已结束则直接返回"已就绪"
+    try {
+      await _initPromise;
+    } catch {
+      // 上一次初始化失败，让下面的逻辑重新跑
+    }
+    if (_lastInitError) {
+      // 上一次初始化失败，强制重跑
+    } else {
+      return { ok: true, migrated: true, seeded: 0 };
+    }
+  }
 
   const doIt = (async () => {
-    let client: PoolClient | null = null;
     const report: DbReadyReport = { ok: false, migrated: false, seeded: 0 };
-
     try {
-      const pool = createPool();
+      const client = createClient();
 
       // 1) 连通性：SELECT 1
-      client = await pool.connect();
-      await client.query('SELECT 1 AS ok');
+      const rows = (await client`SELECT 1 AS ok`) as { ok: unknown }[];
       console.log('[DB] ✅ SELECT 1 连通性检查通过');
+      if (!rows.length || rows[0].ok === undefined) {
+        throw new Error('SELECT 1 没有返回值');
+      }
 
       // 2) 建表（CREATE TABLE IF NOT EXISTS）
       for (const sql of CREATE_TABLES_SQL) {
-        await client.query(sql);
+        await client.unsafe(sql);
       }
       report.migrated = true;
       console.log('[DB] ✅ 建表检查完成（所有表已存在）');
 
       // 3) Seed：blog_posts 为空时，写入内置 3 篇示例
-      const { rows } = await client.query('SELECT COUNT(*)::integer AS cnt FROM blog_posts');
-      const count = Number(rows[0]?.cnt ?? 0);
+      const countRows = (await client`SELECT COUNT(*)::integer AS cnt FROM blog_posts`) as { cnt: number }[];
+      const count = Number(countRows[0]?.cnt ?? 0);
       if (count === 0) {
         const seedData = await import('@/data/blogPosts').then((m) => m.blogPosts);
         console.log(`[DB] blog_posts 表为空，写入 ${seedData.length} 篇内置示例文章`);
         for (const p of seedData) {
-          await client.query(
-            `INSERT INTO blog_posts (title, summary, content, slug, created_at)
-             VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, NOW()))
-             ON CONFLICT (slug) DO NOTHING`,
-            [p.title, p.summary, p.content, p.slug, p.date],
-          );
+          const dateValue: string | null = p.date ?? null;
+          await client`
+            INSERT INTO blog_posts (title, summary, content, slug, created_at)
+            VALUES (${p.title}, ${p.summary}, ${p.content}, ${p.slug},
+                    COALESCE(${dateValue}::timestamptz, NOW()))
+            ON CONFLICT (slug) DO NOTHING
+          `;
         }
         report.seeded = seedData.length;
-        // 写入 health_check 表留个印记
-        await client.query('INSERT INTO health_check DEFAULT VALUES');
+        await client`INSERT INTO health_check DEFAULT VALUES`;
       } else {
         console.log(`[DB] blog_posts 已有 ${count} 篇文章，跳过 seed`);
       }
@@ -226,8 +228,6 @@ export async function ensureDbReady(force = false): Promise<DbReadyReport> {
         code: (err as any)?.code,
       };
       return report;
-    } finally {
-      if (client) try { client.release(); } catch { /* ignore */ }
     }
   })();
 
@@ -235,7 +235,6 @@ export async function ensureDbReady(force = false): Promise<DbReadyReport> {
   return doIt;
 }
 
-/** 最近一次初始化错误，供 API 兜底时用。 */
 export function getLastDbInitError(): Error | null {
   return _lastInitError;
 }

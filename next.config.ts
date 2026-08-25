@@ -3,21 +3,19 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   // 生产构建使用 Next.js standalone 模式（最推荐的自建/第三方平台部署方式）。
   // 会在 .next/standalone 里输出一个 self-contained 的 Node.js 服务，
-  // 把当前 node_modules 中所有 server 侧用到的依赖（包括 pg、bcryptjs 这类
-  // native/commonjs 模块）一并拷贝到 standalone/node_modules，不需要运行时
-  // 再去找外部安装的包 —— 从而修复 EdgeOne Pages 上 "Cannot find package
-  // pg-fcd9a938146891af" 这种 external hash 名找不到的经典问题。
+  // 把当前 node_modules 中所有 server 侧用到的依赖（包括 postgres、bcryptjs 等
+  // 纯 JS 模块）一并拷贝到 standalone/node_modules，避免部署平台运行时再去
+  // 找外部安装的包。
   output: 'standalone',
 
-  // 显式声明这些第三方包必须按 "server external" 处理、即打包时直接
-  // require 它们本身（而不是 turbopack 在 dev 里那种 "pg-{hash}" 的
-  // 伪 external 命名），从而消除 pg-fcd9a938146891af 这种 hash 名。
-  // 参考 Next.js 文档的 serverExternalPackages 字段说明。
+  // 显式声明这些第三方包必须按 "server external" 处理。
+  // 使用 postgres.js（纯 JS PostgreSQL 客户端）作为数据库驱动，
+  // 彻底替代之前的 pg 包——不再需要 pg、pg-protocol、drizzle-orm/node-postgres
+  // 这些容易在 Turbopack 下被 hash 命名的 native/commonjs 包。
   serverExternalPackages: [
-    'pg',
-    'pg-protocol',
+    'postgres',
     'drizzle-orm',
-    'drizzle-orm/node-postgres',
+    'drizzle-orm/postgres-js',
     'bcryptjs',
     'coze-coding-dev-sdk',
     'jose',

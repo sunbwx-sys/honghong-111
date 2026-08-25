@@ -351,14 +351,13 @@ var init_blogPosts = __esm({
 var db_exports = {};
 __export(db_exports, {
   Schema: () => schema_exports,
-  __poolInternalForTest: () => _pool,
-  createPool: () => createPool,
+  createClient: () => createClient,
   db: () => db,
   describeDatabaseUrl: () => describeDatabaseUrl,
   ensureDbReady: () => ensureDbReady,
+  getClient: () => getClient,
   getDb: () => getDb,
-  getLastDbInitError: () => getLastDbInitError,
-  getPool: () => getPool
+  getLastDbInitError: () => getLastDbInitError
 });
 function describeDatabaseUrl() {
   const url = process.env.DATABASE_URL;
@@ -371,8 +370,8 @@ function describeDatabaseUrl() {
     return sanitizeSecrets(url);
   }
 }
-function createPool() {
-  if (_pool) return _pool;
+function createClient() {
+  if (_client) return _client;
   if (!process.env.DATABASE_URL) {
     const msg = "[DB] \u274C DATABASE_URL \u73AF\u5883\u53D8\u91CF\u672A\u914D\u7F6E\u3002\u8BF7\u5728\u90E8\u7F72\u5E73\u53F0\uFF08EdgeOne Pages / Vercel\uFF09\u7684\u300C\u73AF\u5883\u53D8\u91CF\u300D\u8BBE\u7F6E\u4E2D\u6DFB\u52A0 DATABASE_URL\uFF0C\u5E76\u91CD\u65B0\u90E8\u7F72\u3002\u6570\u636E\u5E93\u672A\u8FDE\u63A5\u65F6\uFF0CBlog \u5C06\u4F7F\u7528\u5185\u7F6E\u793A\u4F8B\u6587\u7AE0\u515C\u5E95\uFF0C\u6392\u884C\u699C/\u767B\u5F55\u6CE8\u518C\u529F\u80FD\u4E0D\u53EF\u7528\u3002";
     console.error(msg);
@@ -380,75 +379,83 @@ function createPool() {
     throw _lastInitError;
   }
   console.log(
-    `[DB] \u6B63\u5728\u521B\u5EFA\u8FDE\u63A5\u6C60\uFF0C\u76EE\u6807\uFF1A${describeDatabaseUrl()}`
+    `[DB] \u6B63\u5728\u521B\u5EFA postgres.js \u5BA2\u6237\u7AEF\uFF08\u7EAF JS\uFF09\uFF0C\u76EE\u6807\uFF1A${describeDatabaseUrl()}`
   );
   try {
-    const pool = new import_pg.Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: {
-        rejectUnauthorized: false
-      },
+    const url = process.env.DATABASE_URL;
+    const hostMatch = url.match(/@([^:/?]+)/);
+    const host = hostMatch ? hostMatch[1] : "";
+    const isLocalHost = /^(localhost|127\.0\.0\.1|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(host);
+    const ssl = isLocalHost ? "prefer" : "require";
+    const client = (0, import_postgres.default)(url, {
+      ssl,
       max: 5,
-      // Serverless 环境下不要贪大，5 够用了
-      idleTimeoutMillis: 15e3,
-      connectionTimeoutMillis: 1e4
+      idle_timeout: 15,
+      connect_timeout: 10,
+      // postgres.js 默认使用 UTC 时区，兼容 drizzle-orm
+      transform: {
+        undefined: null
+      }
     });
-    pool.on("error", (err) => {
-      safeLogError("DB Pool error", {
-        name: err.name,
-        message: err.message,
-        code: err.code,
-        routine: err.routine
-      });
-    });
-    _pool = pool;
+    _client = client;
     _lastInitError = null;
-    console.log("[DB] \u2705 \u8FDE\u63A5\u6C60\u521B\u5EFA\u6210\u529F\uFF08\u5C1A\u672A\u5B9E\u9645\u8FDE\u63A5\uFF0C\u9996\u6B21\u67E5\u8BE2\u65F6\u5EFA\u7ACB\uFF09");
-    return pool;
+    console.log(`[DB] \u2705 postgres.js \u5BA2\u6237\u7AEF\u521B\u5EFA\u6210\u529F\uFF08ssl=${ssl}\uFF0Chost=${host}\uFF09`);
+    return client;
   } catch (err) {
-    safeLogError("createPool", err);
+    safeLogError("createClient (postgres.js)", err);
     _lastInitError = err instanceof Error ? err : new Error(String(err));
     throw _lastInitError;
   }
 }
-function getPool() {
-  return _pool ?? createPool();
+function getClient() {
+  return _client ?? createClient();
 }
 function getDb() {
   if (_db) return _db;
-  _db = (0, import_node_postgres.drizzle)(getPool());
+  _db = (0, import_postgres_js.drizzle)(getClient(), { schema: schema_exports });
   return _db;
 }
 async function ensureDbReady(force = false) {
-  if (!force && _initPromise) return _initPromise.then(() => ({ ok: true, migrated: true, seeded: 0 }));
+  if (!force && _initPromise) {
+    try {
+      await _initPromise;
+    } catch {
+    }
+    if (_lastInitError) {
+    } else {
+      return { ok: true, migrated: true, seeded: 0 };
+    }
+  }
   const doIt = (async () => {
-    let client = null;
     const report = { ok: false, migrated: false, seeded: 0 };
     try {
-      const pool = createPool();
-      client = await pool.connect();
-      await client.query("SELECT 1 AS ok");
+      const client = createClient();
+      const rows = await client`SELECT 1 AS ok`;
       console.log("[DB] \u2705 SELECT 1 \u8FDE\u901A\u6027\u68C0\u67E5\u901A\u8FC7");
+      if (!rows.length || rows[0].ok === void 0) {
+        throw new Error("SELECT 1 \u6CA1\u6709\u8FD4\u56DE\u503C");
+      }
       for (const sql of CREATE_TABLES_SQL) {
-        await client.query(sql);
+        await client.unsafe(sql);
       }
       report.migrated = true;
       console.log("[DB] \u2705 \u5EFA\u8868\u68C0\u67E5\u5B8C\u6210\uFF08\u6240\u6709\u8868\u5DF2\u5B58\u5728\uFF09");
-      const { rows } = await client.query("SELECT COUNT(*)::integer AS cnt FROM blog_posts");
-      const count = Number(rows[0]?.cnt ?? 0);
+      const countRows = await client`SELECT COUNT(*)::integer AS cnt FROM blog_posts`;
+      const count = Number(countRows[0]?.cnt ?? 0);
       if (count === 0) {
         const seedData = await Promise.resolve().then(() => (init_blogPosts(), blogPosts_exports)).then((m) => m.blogPosts);
         console.log(`[DB] blog_posts \u8868\u4E3A\u7A7A\uFF0C\u5199\u5165 ${seedData.length} \u7BC7\u5185\u7F6E\u793A\u4F8B\u6587\u7AE0`);
         for (const p of seedData) {
-          await client.query(
-            `INSERT INTO blog_posts (title, summary, content, slug, created_at)
-             VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, NOW()))
-             ON CONFLICT (slug) DO NOTHING`,
-            [p.title, p.summary, p.content, p.slug, p.date]
-          );
+          const dateValue = p.date ?? null;
+          await client`
+            INSERT INTO blog_posts (title, summary, content, slug, created_at)
+            VALUES (${p.title}, ${p.summary}, ${p.content}, ${p.slug},
+                    COALESCE(${dateValue}::timestamptz, NOW()))
+            ON CONFLICT (slug) DO NOTHING
+          `;
         }
         report.seeded = seedData.length;
-        await client.query("INSERT INTO health_check DEFAULT VALUES");
+        await client`INSERT INTO health_check DEFAULT VALUES`;
       } else {
         console.log(`[DB] blog_posts \u5DF2\u6709 ${count} \u7BC7\u6587\u7AE0\uFF0C\u8DF3\u8FC7 seed`);
       }
@@ -466,11 +473,6 @@ async function ensureDbReady(force = false) {
         code: err?.code
       };
       return report;
-    } finally {
-      if (client) try {
-        client.release();
-      } catch {
-      }
     }
   })();
   _initPromise = doIt.then(() => void 0).catch(() => void 0);
@@ -479,16 +481,16 @@ async function ensureDbReady(force = false) {
 function getLastDbInitError() {
   return _lastInitError;
 }
-var import_node_postgres, import_pg, import_config, _pool, _db, _initPromise, _lastInitError, db, CREATE_TABLES_SQL;
+var import_postgres_js, import_postgres, import_config, _client, _db, _initPromise, _lastInitError, db, CREATE_TABLES_SQL;
 var init_db = __esm({
   "src/storage/database/db.ts"() {
     "use strict";
-    import_node_postgres = require("drizzle-orm/node-postgres");
-    import_pg = require("pg");
+    import_postgres_js = require("drizzle-orm/postgres-js");
+    import_postgres = __toESM(require("postgres"));
     import_config = require("dotenv/config");
     init_utils();
     init_schema();
-    _pool = null;
+    _client = null;
     _db = null;
     _initPromise = null;
     _lastInitError = null;
