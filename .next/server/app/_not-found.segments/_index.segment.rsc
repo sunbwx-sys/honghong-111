@@ -1,9 +1,0 @@
-1:"$Sreact.fragment"
-2:I[5968,["131","static/chunks/131-790c1c54263d98ec.js","177","static/chunks/app/layout-fa398a64329db157.js"],"AuthProvider"]
-3:I[2376,["131","static/chunks/131-790c1c54263d98ec.js","177","static/chunks/app/layout-fa398a64329db157.js"],"GameProvider"]
-4:I[3548,[],""]
-5:I[2634,[],""]
-6:I[9131,["131","static/chunks/131-790c1c54263d98ec.js","177","static/chunks/app/layout-fa398a64329db157.js"],"Inspector"]
-:HL["/_next/static/css/b87cc0824c9f760e.css","style"]
-:HL["https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap","style"]
-0:{"buildId":"xPJZM9v1AMtJwDiUxajmF","rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/_next/static/css/b87cc0824c9f760e.css","precedence":"next"}]],["$","html",null,{"lang":"zh-CN","children":[["$","head",null,{"children":[["$","link",null,{"rel":"preconnect","href":"https://fonts.googleapis.com"}],["$","link",null,{"rel":"preconnect","href":"https://fonts.gstatic.com","crossOrigin":"anonymous"}],["$","link",null,{"href":"https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap","rel":"stylesheet"}]]}],["$","body",null,{"className":"antialiased","children":[["$","$L2",null,{"children":["$","$L3",null,{"children":["$","$L4",null,{"parallelRouterKey":"children","template":["$","$L5",null,{}]}]}]}],["$","$L6",null,{}]]}]]}]]}],"loading":null,"isPartial":false}
