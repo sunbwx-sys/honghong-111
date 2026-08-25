@@ -69,6 +69,24 @@ function resolveFromFields(): { fromName: string; fromAddr: string; from: string
   return { fromName, fromAddr, from };
 }
 
+export type SendEmailDiagnosis = {
+  ok: boolean;
+  skippedReason?: 'not_email' | 'no_api_key';
+  elapsedMs: number;
+  resendEmailId?: string;
+  resendError?: {
+    name?: string;
+    message?: string;
+    statusCode?: number;
+    code?: string;
+    raw?: unknown;
+  };
+  exception?: unknown;
+  fromName: string;
+  fromEmail: string;
+  to: string;
+};
+
 /**
  * 发送"注册成功欢迎邮件"。
  *
@@ -77,25 +95,37 @@ function resolveFromFields(): { fromName: string; fromAddr: string; from: string
  * 大概率来不及执行 → 邮件根本不会发。**请调用方务必 await 本函数后再 return 响应！**
  * 为了不阻塞用户体验太久，调用方可用 Promise.race 加一个 6-8 秒的超时兜底。
  *
- * @returns true 表示发送请求成功（不保证对方一定收到，Resend 异步投递），
- *          false 表示被跳过 / 未配置 / 发送失败，都属于"非致命错误"。
- *          本函数**永远不会 throw**。
+ * @returns SendEmailDiagnosis 结构化诊断对象：
+ *          - ok=false 时一定能在 resendError 或 exception 里看到具体原因，
+ *            便于调试接口直接返回给用户，而不用再去翻 EdgeOne 的函数日志。
+ *          - 本函数**永远不会 throw**（任何异常都被包装进 diagnosis.exception 返回）。
  */
-export async function sendWelcomeEmail(username: string): Promise<boolean> {
+export async function sendWelcomeEmail(username: string): Promise<SendEmailDiagnosis> {
   const startTimeMs = Date.now();
   try {
     if (!isEmailLike(username)) {
-      // 用户名不是邮箱 → 静默跳过
-      return false;
+      return {
+        ok: false,
+        skippedReason: 'not_email',
+        elapsedMs: Date.now() - startTimeMs,
+        fromName: '',
+        fromEmail: '',
+        to: username,
+      };
     }
 
     const email = username.trim();
     const resend = getResend();
     if (!resend) {
-      // 没配 RESEND_API_KEY → 静默跳过（本地开发 / 未配置时不骚扰日志）
-      // 仍然用 info 级别让管理员可追踪
       console.log('[Email] RESEND_API_KEY 未配置，跳过欢迎邮件发送 →', email);
-      return false;
+      return {
+        ok: false,
+        skippedReason: 'no_api_key',
+        elapsedMs: Date.now() - startTimeMs,
+        fromName: '',
+        fromEmail: '',
+        to: email,
+      };
     }
 
     const { fromName, fromAddr, from } = resolveFromFields();
@@ -129,28 +159,56 @@ export async function sendWelcomeEmail(username: string): Promise<boolean> {
     });
 
     // Resend SDK 返回对象：{ data: { id: string } } 或 { error: {...} }
-    if ((resp as { error?: unknown }).error) {
-      const elapsed = Date.now() - startTimeMs;
+    const respErr = (resp as { error?: unknown }).error;
+    if (respErr) {
+      const err = respErr as Record<string, unknown>;
+      const diagnosis: SendEmailDiagnosis = {
+        ok: false,
+        elapsedMs: Date.now() - startTimeMs,
+        resendError: {
+          name: typeof err?.name === 'string' ? err.name : undefined,
+          message: typeof err?.message === 'string' ? err.message : undefined,
+          statusCode: typeof err?.statusCode === 'number' ? err.statusCode : undefined,
+          code: typeof err?.code === 'string' ? err.code : undefined,
+          raw: sanitizeSecrets(respErr),
+        },
+        fromName,
+        fromEmail: fromAddr,
+        to: email,
+      };
       safeLogError(
-        `[Email] Resend 返回错误（${elapsed}ms） → ${email}`,
-        sanitizeSecrets((resp as { error: unknown }).error),
+        `[Email] Resend 返回错误（${diagnosis.elapsedMs}ms） → ${email}`,
+        diagnosis.resendError,
       );
-      return false;
+      return diagnosis;
     }
     const id = (resp as { data?: { id?: string } }).data?.id;
     const elapsed = Date.now() - startTimeMs;
     console.log(
       `[Email] 欢迎邮件已提交 Resend（${elapsed}ms） → ${email}  id=${id || 'unknown'}`,
     );
-    return true;
+    return {
+      ok: true,
+      elapsedMs: elapsed,
+      resendEmailId: id,
+      fromName,
+      fromEmail: fromAddr,
+      to: email,
+    };
   } catch (err) {
     const elapsed = Date.now() - startTimeMs;
-    // 最高级兜底：任何异常都不能向上抛（保证注册不被影响）
     safeLogError(
       `[Email] sendWelcomeEmail 异常（${elapsed}ms，已吞掉，不影响注册）`,
       err,
     );
-    return false;
+    return {
+      ok: false,
+      elapsedMs: elapsed,
+      exception: sanitizeSecrets(err),
+      fromName: '',
+      fromEmail: '',
+      to: username,
+    };
   }
 }
 

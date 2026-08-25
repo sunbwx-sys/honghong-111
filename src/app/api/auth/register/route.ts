@@ -97,22 +97,26 @@ export async function POST(request: Request) {
         console.error(
           `[REGISTER-EMAIL-STEP-2-START] awaiting sendWelcomeEmail + ${emailTimeoutMs}ms timeout ...`,
         );
-        const raceRes = await Promise.race([
-          (async () => {
-            const sent = await sendWelcomeEmail(user.username);
-            return { kind: 'done', sent } as const;
-          })(),
-          new Promise<{ kind: 'timeout' }>((resolve) =>
-            setTimeout(() => {
-              console.error(
-                `[REGISTER-EMAIL-STEP-3-TIMEOUT] 超过 ${emailTimeoutMs}ms 未返回，直接继续注册成功（邮件可能仍未发出）`,
-              );
-              resolve({ kind: 'timeout' });
-            }, emailTimeoutMs),
-          ),
-        ]);
+        type DoneRace = { kind: 'done'; diag: import('@/lib/emailService').SendEmailDiagnosis };
+        type TimeoutRace = { kind: 'timeout' };
+        const doneBranch: Promise<DoneRace> = (async () => {
+          const diag = await sendWelcomeEmail(user.username);
+          return { kind: 'done', diag } as DoneRace;
+        })();
+        const timeoutBranch: Promise<TimeoutRace> = new Promise((resolve) =>
+          setTimeout(() => {
+            console.error(
+              `[REGISTER-EMAIL-STEP-3-TIMEOUT] 超过 ${emailTimeoutMs}ms 未返回，直接继续注册成功（邮件可能仍未发出）`,
+            );
+            resolve({ kind: 'timeout' });
+          }, emailTimeoutMs),
+        );
+        const raceRes: DoneRace | TimeoutRace = await Promise.race([doneBranch, timeoutBranch]);
         console.error(
-          `[REGISTER-EMAIL-STEP-4-RESULT] raceRes=${JSON.stringify(raceRes)}`,
+          `[REGISTER-EMAIL-STEP-4-RESULT] raceRes=${JSON.stringify(
+            raceRes,
+            (_k, v) => (typeof v === 'bigint' ? v.toString() : v),
+          )}`,
         );
       } catch (err) {
         // 最外层理论不会到这里（sendWelcomeEmail 内部已经 catch 完了），但再兜一层更保险
