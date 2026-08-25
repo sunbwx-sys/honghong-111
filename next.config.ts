@@ -9,15 +9,14 @@ const nextConfig: NextConfig = {
   output: 'standalone',
 
   // 显式声明这些第三方包必须按 "server external" 处理。
-  // 使用 postgres.js（纯 JS PostgreSQL 客户端）作为数据库驱动，
-  // 彻底替代之前的 pg 包——不再需要 pg、pg-protocol、drizzle-orm/node-postgres
-  // 这些容易在 Turbopack 下被 hash 命名的 native/commonjs 包。
+  // 注意：不要把 coze-coding-dev-sdk 加入此列表——Turbopack 对含复杂子依赖
+  // （@langchain/openai、openai 等）的 SDK 会自动 hash 命名 external，EdgeOne
+  // 运行时无法解析这些 hash 名。改为用静态 import 直接打包进路由产物。
   serverExternalPackages: [
     'postgres',
     'drizzle-orm',
     'drizzle-orm/postgres-js',
     'bcryptjs',
-    'coze-coding-dev-sdk',
     'jose',
   ],
 

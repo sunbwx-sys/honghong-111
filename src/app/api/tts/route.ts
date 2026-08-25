@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cleanTextForSpeech, assertCozeEnv, safeLogError } from '@/lib/utils';
+import { TTSClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15; // Vercel Serverless Function 最大执行时长，EdgeOne 会忽略此字段
@@ -37,9 +38,6 @@ export async function POST(request: NextRequest) {
 
     // ⚠️ 环境变量预检（写入 server 日志）
     assertCozeEnv('POST /api/tts');
-
-    // ⚠️ 动态 import coze SDK，避免模块加载阶段抛异常导致平台层返回 500
-    const { TTSClient, Config, HeaderUtils } = await import('coze-coding-dev-sdk');
 
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const config = new Config({ timeout: 15000 });

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createPost, slugExists, getAllPosts } from '@/lib/blogService';
 import { assertCozeEnv, safeLogError } from '@/lib/utils';
+import { LLMClient, Config } from 'coze-coding-dev-sdk';
 
 export const runtime = 'nodejs';
 
@@ -11,9 +12,6 @@ export async function POST(request: Request) {
     // ⚠️ 环境变量预检（写入 server 日志）
     assertCozeEnv('POST /api/blog/generate');
 
-    // ⚠️ 动态 import coze SDK 并在 handler 内初始化客户端
-    // 避免模块加载阶段（顶层 new Config/new LLMClient）抛异常导致平台层 500
-    const { LLMClient, Config } = await import('coze-coding-dev-sdk');
     const config = new Config();
     const llmClient = new LLMClient(config);
 

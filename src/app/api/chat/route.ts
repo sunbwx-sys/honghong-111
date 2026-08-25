@@ -6,6 +6,7 @@ import {
   MAX_ROUNDS,
 } from '@/types/game';
 import { assertCozeEnv, safeLogError, sanitizeSecrets } from '@/lib/utils';
+import { LLMClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30; // Vercel Serverless Function 最大执行时长，EdgeOne 会忽略此字段
@@ -100,11 +101,7 @@ export async function POST(request: NextRequest) {
     const { gender, scenario, messages, affection, step, isGameOver, won } = body;
 
     // ⚠️ 环境变量预检 —— 若缺配置写 server 日志，直接走降级，不用再抛 SDK 错误
-    const envReady = assertCozeEnv('POST /api/chat');
-
-    // ⚠️ 动态 import coze SDK，避免在模块加载阶段（平台运行时不兼容）抛异常
-    // 导致外层 try/catch 捕获不到、直接返回平台层 500 纯文本错误
-    const { LLMClient, Config, HeaderUtils } = await import('coze-coding-dev-sdk');
+    assertCozeEnv('POST /api/chat');
 
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const config = new Config({ timeout: 30000 });
