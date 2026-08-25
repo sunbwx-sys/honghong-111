@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { registerUser } from '@/lib/authService';
 import { SignJWT } from 'jose';
 import { safeLogError, sanitizeSecrets } from '@/lib/utils';
-import { sendWelcomeEmail } from '@/lib/emailService';
+import { sendWelcomeEmail, isEmailLike } from '@/lib/emailService';
 
 const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || 'hong-hong-mock-secret-key-please-change-in-production'
@@ -85,21 +85,41 @@ export async function POST(request: Request) {
     //    这里用 Promise.race + 6 秒超时兜底：Resend 一般 300–800ms 返回，
     //    就算网络异常也最多等 6 秒，不会拖垮注册体验；任何错误都被内部吞掉，仍继续成功返回。
     const emailTimeoutMs = 6000;
-    try {
-      await Promise.race([
-        sendWelcomeEmail(user.username),
-        new Promise<boolean>((resolve) =>
-          setTimeout(() => {
-            console.log(
-              `[Register] 欢迎邮件发送超过 ${emailTimeoutMs}ms，放弃等待直接返回注册成功（邮件可能仍在后台投递）`,
-            );
-            resolve(false);
-          }, emailTimeoutMs),
-        ),
-      ]);
-    } catch (err) {
-      // 最外层理论不会到这里（sendWelcomeEmail 内部已经 catch 完了），但再兜一层更保险
-      safeLogError('[Register] 等待欢迎邮件时外层异常（已吞，不影响注册）', err);
+    const isEmail = isEmailLike(user.username);
+    // 🔍 强诊断日志（用 console.error 避免某些平台只采集 stderr）。EdgeOne 搜 REGISTER-EMAIL 必命中。
+    console.error(
+      `[REGISTER-EMAIL-STEP-1-BRANCH] userId=${user.id} username=${JSON.stringify(
+        user.username,
+      )} isEmail=${isEmail}`,
+    );
+    if (isEmail) {
+      try {
+        console.error(
+          `[REGISTER-EMAIL-STEP-2-START] awaiting sendWelcomeEmail + ${emailTimeoutMs}ms timeout ...`,
+        );
+        const raceRes = await Promise.race([
+          (async () => {
+            const sent = await sendWelcomeEmail(user.username);
+            return { kind: 'done', sent } as const;
+          })(),
+          new Promise<{ kind: 'timeout' }>((resolve) =>
+            setTimeout(() => {
+              console.error(
+                `[REGISTER-EMAIL-STEP-3-TIMEOUT] 超过 ${emailTimeoutMs}ms 未返回，直接继续注册成功（邮件可能仍未发出）`,
+              );
+              resolve({ kind: 'timeout' });
+            }, emailTimeoutMs),
+          ),
+        ]);
+        console.error(
+          `[REGISTER-EMAIL-STEP-4-RESULT] raceRes=${JSON.stringify(raceRes)}`,
+        );
+      } catch (err) {
+        // 最外层理论不会到这里（sendWelcomeEmail 内部已经 catch 完了），但再兜一层更保险
+        safeLogError('[REGISTER-EMAIL-STEP-5-EXCEPTION]（已吞，不影响注册）', err);
+      }
+    } else {
+      console.error(`[REGISTER-EMAIL-STEP-6-SKIP] 用户名不是邮箱，跳过。`);
     }
 
     return NextResponse.json({
