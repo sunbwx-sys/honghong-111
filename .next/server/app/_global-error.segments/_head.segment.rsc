@@ -1,6 +1,5 @@
 1:"$Sreact.fragment"
-2:I[11282,["/_next/static/chunks/d5e289bff96cf0c1.js","/_next/static/chunks/0eed89cda4daeeed.js"],"ViewportBoundary"]
-3:I[11282,["/_next/static/chunks/d5e289bff96cf0c1.js","/_next/static/chunks/0eed89cda4daeeed.js"],"MetadataBoundary"]
+2:I[2105,[],"ViewportBoundary"]
+3:I[2105,[],"MetadataBoundary"]
 4:"$Sreact.suspense"
-5:I[37434,["/_next/static/chunks/d5e289bff96cf0c1.js","/_next/static/chunks/0eed89cda4daeeed.js"],"IconMark"]
-0:{"buildId":"pHkQBNDeiIEbZT1DNKKH7","rsc":["$","$1","h",{"children":[null,["$","$L2",null,{"children":[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]}],["$","div",null,{"hidden":true,"children":["$","$L3",null,{"children":["$","$4",null,{"name":"Next.Metadata","children":[["$","link","0",{"rel":"icon","href":"/favicon.ico?favicon.0b3bf435.ico","sizes":"256x256","type":"image/x-icon"}],["$","$L5","1",{}]]}]}]}],null]}],"loading":null,"isPartial":false}
+0:{"buildId":"xPJZM9v1AMtJwDiUxajmF","rsc":["$","$1","h",{"children":[null,["$","$L2",null,{"children":[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]}],["$","div",null,{"hidden":true,"children":["$","$L3",null,{"children":["$","$4",null,{"name":"Next.Metadata","children":[]}]}]}],null]}],"loading":null,"isPartial":false}
