@@ -14,6 +14,7 @@ const nextConfig: NextConfig = {
     'undici',
     '@langchain/openai',
     'openai',
+    'ws',
   ],
 
   allowedDevOrigins: ['*.dev.coze.site'],
