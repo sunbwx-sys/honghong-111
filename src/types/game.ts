@@ -49,30 +49,30 @@ export const MIN_AFFECTION = -50;
 export const WIN_AFFECTION = 80;
 export const MAX_ROUNDS = 10;
 
-// 语音配置映射
+// 语音配置映射（千问 qwen3-tts-flash-realtime 音色）
 export const VOICE_CONFIG: Record<VoiceType, { speaker: string; label: string; gender: Gender }> = {
   'gentle-female': {
-    speaker: 'zh_female_xiaohe_uranus_bigtts',
+    speaker: 'Serena',
     label: '温柔女声',
     gender: 'female',
   },
   'cool-female': {
-    speaker: 'zh_female_vv_uranus_bigtts',
+    speaker: 'Vivian',
     label: '霸道御姐',
     gender: 'female',
   },
   'cute-female': {
-    speaker: 'saturn_zh_female_keainvsheng_tob',
+    speaker: 'Bunny',
     label: '可爱软妹',
     gender: 'female',
   },
   'deep-male': {
-    speaker: 'zh_male_m191_uranus_bigtts',
+    speaker: 'Vincent',
     label: '低沉男声',
     gender: 'male',
   },
   'gentle-male': {
-    speaker: 'zh_male_taocheng_uranus_bigtts',
+    speaker: 'Kai',
     label: '温柔男声',
     gender: 'male',
   },

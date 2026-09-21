@@ -338,6 +338,33 @@ export default function StartScreen() {
             </div>
           )}
 
+          {/* 开始按钮 */}
+          <GlowBox
+            colors={['#ec4899', '#a855f7', '#3b82f6', '#06b6d4', '#ec4899']}
+            mode="rotate"
+            blur="strong"
+            duration={4}
+            className="rounded-xl"
+          >
+            <GlowingEffect spread={40} glow={false} disabled={false} proximity={64} inactiveZone={0.01} borderWidth={3} variant="pink" />
+            <Button
+              type="button"
+              size="lg"
+              className="relative w-full h-14 rounded-xl text-lg font-medium bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 shadow-lg transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handleStart}
+              disabled={!canStart}
+            >
+              {isStarting ? (
+                <span className="animate-pulse">加载中...</span>
+              ) : (
+                <>
+                  开始游戏
+                  <ChevronRight className="w-5 h-5 ml-1" />
+                </>
+              )}
+            </Button>
+          </GlowBox>
+
           {/* 恋爱攻略入口 */}
           <div className="grid grid-cols-2 gap-3">
             <GlowBox
@@ -392,33 +419,6 @@ export default function StartScreen() {
               </Link>
             </GlowBox>
           </div>
-
-          {/* 开始按钮 */}
-          <GlowBox
-            colors={['#ec4899', '#a855f7', '#3b82f6', '#06b6d4', '#ec4899']}
-            mode="rotate"
-            blur="strong"
-            duration={4}
-            className="rounded-xl"
-          >
-            <GlowingEffect spread={40} glow={false} disabled={false} proximity={64} inactiveZone={0.01} borderWidth={3} variant="pink" />
-            <Button
-              type="button"
-              size="lg"
-              className="relative w-full h-14 rounded-xl text-lg font-medium bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 shadow-lg transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={handleStart}
-              disabled={!canStart}
-            >
-              {isStarting ? (
-                <span className="animate-pulse">加载中...</span>
-              ) : (
-                <>
-                  开始游戏
-                  <ChevronRight className="w-5 h-5 ml-1" />
-                </>
-              )}
-            </Button>
-          </GlowBox>
         </div>
 
         {/* 底部说明 */}

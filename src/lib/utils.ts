@@ -197,3 +197,23 @@ export function assertDeepSeekEnv(callerName: string): boolean {
   );
   return false;
 }
+
+/**
+ * 检查千问 TTS API 所需的环境变量是否配置。
+ *
+ * 需要 QWEN_API_KEY 一个变量，用于调用千问 qwen3-tts-flash-realtime 模型。
+ * 若未配置，语音合成功能将不可用，但不影响游戏流程。
+ */
+export function assertQwenEnv(callerName: string): boolean {
+  const required: Array<keyof NodeJS.ProcessEnv> = ['QWEN_API_KEY'];
+
+  const missing = required.filter((k) => !process.env[k]);
+  if (missing.length === 0) return true;
+
+  console.error(
+    `[${callerName}] ⚠️ 缺少千问 TTS API 必需的环境变量：${missing.join(', ')}。` +
+      '请在 .env.local 或部署平台的「环境变量」设置中添加 QWEN_API_KEY，' +
+      '否则语音合成功能将不可用。',
+  );
+  return false;
+}
