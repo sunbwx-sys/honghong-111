@@ -8,6 +8,7 @@ interface TTSRequest {
   text: string;
   speaker: string;
   uid: string;
+  stream?: boolean;
 }
 
 const QWEN_TTS_HTTP_URL =
@@ -49,10 +50,162 @@ interface QwenTTSChunk {
   };
 }
 
+async function callQwenTTS(
+  apiKey: string,
+  cleanText: string,
+  speaker: string,
+  useStream: boolean,
+): Promise<Response> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+  };
+  if (useStream) {
+    headers['X-DashScope-SSE'] = 'enable';
+  }
+
+  return fetch(QWEN_TTS_HTTP_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model: 'qwen3-tts-flash',
+      input: {
+        text: cleanText,
+        voice: speaker,
+        language_type: 'Chinese',
+      },
+    }),
+    signal: AbortSignal.timeout(25000),
+  });
+}
+
+// 非流式模式：收集所有 PCM 片段，返回完整 WAV base64
+async function handleNonStream(
+  apiKey: string,
+  cleanText: string,
+  speaker: string,
+) {
+  const qwenResponse = await callQwenTTS(apiKey, cleanText, speaker, false);
+
+  if (!qwenResponse.ok) {
+    const errText = await qwenResponse.text().catch(() => '');
+    throw new Error(`Qwen TTS HTTP ${qwenResponse.status}: ${sanitizeSecrets(errText)}`);
+  }
+
+  const data: QwenTTSChunk = await qwenResponse.json();
+
+  if (data.status_code && data.status_code !== 200) {
+    throw new Error(`Qwen TTS: ${data.code || ''} ${data.message || ''}`);
+  }
+
+  const audio = data.output?.audio;
+  if (!audio) {
+    throw new Error('Qwen TTS: no audio in response');
+  }
+
+  // 非流式模式：data 字段有 base64 音频
+  if (audio.data) {
+    return {
+      audioUri: `data:audio/wav;base64,${audio.data}`,
+      audioSize: audio.data.length,
+    };
+  }
+
+  // 如果只有 url，下载音频转成 base64 data URI
+  if (audio.url) {
+    const audioRes = await fetch(audio.url, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!audioRes.ok) {
+      throw new Error(`Failed to download audio from OSS: ${audioRes.status}`);
+    }
+    const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+    return {
+      audioUri: `data:audio/wav;base64,${audioBuffer.toString('base64')}`,
+      audioSize: audioBuffer.length,
+    };
+  }
+
+  throw new Error('Qwen TTS: no audio data or url in response');
+}
+
+// 流式模式：SSE 转发
+async function handleStream(
+  apiKey: string,
+  cleanText: string,
+  speaker: string,
+) {
+  const qwenResponse = await callQwenTTS(apiKey, cleanText, speaker, true);
+
+  if (!qwenResponse.ok) {
+    const errText = await qwenResponse.text().catch(() => '');
+    throw new Error(`Qwen TTS HTTP ${qwenResponse.status}: ${sanitizeSecrets(errText)}`);
+  }
+
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const reader = qwenResponse.body!.getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split('\n');
+          sseBuffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data:')) continue;
+            const jsonStr = line.slice(5).trim();
+            if (!jsonStr) continue;
+
+            try {
+              const chunk: QwenTTSChunk = JSON.parse(jsonStr);
+
+              if (chunk.status_code && chunk.status_code !== 200) {
+                throw new Error(`Qwen TTS: ${chunk.code || ''} ${chunk.message || ''}`);
+              }
+
+              const audioData = chunk.output?.audio?.data;
+              if (audioData) {
+                const pcm = Buffer.from(audioData, 'base64');
+                const wav = wrapPcmInWav(pcm, 24000, 16, 1);
+                const b64 = wav.toString('base64');
+                controller.enqueue(encoder.encode(`data:{"audio":"${b64}"}\n\n`));
+              }
+            } catch {
+              // 跳过无法解析的行
+            }
+          }
+        }
+        controller.enqueue(encoder.encode('data:{"done":true}\n\n'));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        controller.enqueue(encoder.encode(`data:{"error":"${msg.replace(/"/g, '\\"')}"}\n\n`));
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body: TTSRequest = await request.json();
-    const { text, speaker } = body;
+    const { text, speaker, stream: wantStream = true } = body;
 
     if (!text || !speaker) {
       return NextResponse.json(
@@ -79,89 +232,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 使用 SSE 流式模式——音频片段边合成边返回
-    const qwenResponse = await fetch(QWEN_TTS_HTTP_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        'X-DashScope-SSE': 'enable',
-      },
-      body: JSON.stringify({
-        model: 'qwen3-tts-flash',
-        input: {
-          text: cleanText,
-          voice: speaker,
-          language_type: 'Chinese',
-        },
-      }),
-      signal: AbortSignal.timeout(25000),
-    });
-
-    if (!qwenResponse.ok) {
-      const errText = await qwenResponse.text().catch(() => '');
-      throw new Error(`Qwen TTS HTTP ${qwenResponse.status}: ${sanitizeSecrets(errText)}`);
+    // 根据 stream 参数选择模式
+    if (wantStream) {
+      return await handleStream(apiKey, cleanText, speaker);
+    } else {
+      const result = await handleNonStream(apiKey, cleanText, speaker);
+      return NextResponse.json(result);
     }
-
-    const encoder = new TextEncoder();
-
-    const stream = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        const reader = qwenResponse.body!.getReader();
-        const decoder = new TextDecoder();
-        let sseBuffer = '';
-
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            sseBuffer += decoder.decode(value, { stream: true });
-            const lines = sseBuffer.split('\n');
-            sseBuffer = lines.pop() || '';
-
-            for (const line of lines) {
-              if (!line.startsWith('data:')) continue;
-              const jsonStr = line.slice(5).trim();
-              if (!jsonStr) continue;
-
-              try {
-                const chunk: QwenTTSChunk = JSON.parse(jsonStr);
-
-                if (chunk.status_code && chunk.status_code !== 200) {
-                  throw new Error(`Qwen TTS: ${chunk.code || ''} ${chunk.message || ''}`);
-                }
-
-                const audioData = chunk.output?.audio?.data;
-                if (audioData) {
-                  // 将 PCM 片段包裹成 WAV 发给前端
-                  const pcm = Buffer.from(audioData, 'base64');
-                  const wav = wrapPcmInWav(pcm, 24000, 16, 1);
-                  const b64 = wav.toString('base64');
-                  controller.enqueue(encoder.encode(`data:{"audio":"${b64}"}\n\n`));
-                }
-              } catch {
-                // 跳过无法解析的行
-              }
-            }
-          }
-          controller.enqueue(encoder.encode('data:{"done":true}\n\n'));
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          controller.enqueue(encoder.encode(`data:{"error":"${msg.replace(/"/g, '\\"')}"}\n\n`));
-        } finally {
-          controller.close();
-        }
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      },
-    });
   } catch (error) {
     safeLogError('POST /api/tts', error);
     return NextResponse.json(

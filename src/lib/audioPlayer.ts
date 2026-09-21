@@ -279,6 +279,14 @@ export async function playTtsStream(
   const decoder = new TextDecoder();
   let sseBuffer = '';
   let streamEnded = false;
+  let receivedAnyAudio = false;
+
+  // 超时检测：5 秒内没收到任何音频数据 → 抛错触发降级
+  const timeoutId = setTimeout(() => {
+    if (!receivedAnyAudio) {
+      try { reader.cancel(); } catch { /* ignore */ }
+    }
+  }, 5000);
 
   const queue: AudioBuffer[] = [];
   let isPlaying = false;
@@ -373,6 +381,7 @@ export async function playTtsStream(
         }
 
         if (event.audio) {
+          receivedAnyAudio = true;
           // base64 WAV → Uint8Array
           const binaryStr = atob(event.audio);
           const wavBytes = new Uint8Array(binaryStr.length);
@@ -400,6 +409,7 @@ export async function playTtsStream(
   } catch {
     handlers.onError?.();
   } finally {
+    clearTimeout(timeoutId);
     currentStreamReader = null;
   }
 

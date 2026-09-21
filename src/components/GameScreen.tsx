@@ -197,49 +197,133 @@ export default function GameScreen() {
       if (!cleanText) return;
 
       const generateAudio = async () => {
+        const ttsBody = {
+          text: cleanText,
+          speaker: voiceConfig.speaker,
+          uid: `game-${Date.now()}`,
+        };
+
+        // 先尝试流式播放
         try {
           const response = await fetch('/api/tts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              text: cleanText,
-              speaker: voiceConfig.speaker,
-              uid: `game-${Date.now()}`,
-            }),
+            body: JSON.stringify({ ...ttsBody, stream: true }),
           });
 
           if (response.ok) {
-            // 立即标记为"流式播放中"，显示播放按钮
-            setAudioUri('streaming');
+            const contentType = response.headers.get('content-type') || '';
 
-            if (!isMuted) {
-              // ⚠️ 流式播放：边接收音频片段边播放，大幅缩短首音延迟
-              void (async () => {
-                try {
-                  const replayUri = await playTtsStream(response, {
-                    onPlay: () => {
-                      setIsPlaying(true);
-                      setNeedsManualPlay(false);
-                    },
-                    onEnded: () => setIsPlaying(false),
-                    onError: () => {
-                      setIsPlaying(false);
-                      setNeedsManualPlay(true);
-                    },
-                  });
-                  // 流结束后，保存完整音频 URI 供重播
-                  if (replayUri) {
-                    setAudioUri(replayUri);
+            // SSE 流式响应
+            if (contentType.includes('text/event-stream')) {
+              setAudioUri('streaming');
+
+              if (!isMuted) {
+                void (async () => {
+                  let streamFailed = false;
+                  try {
+                    const replayUri = await playTtsStream(response, {
+                      onPlay: () => {
+                        setIsPlaying(true);
+                        setNeedsManualPlay(false);
+                      },
+                      onEnded: () => setIsPlaying(false),
+                      onError: () => {
+                        setIsPlaying(false);
+                        streamFailed = true;
+                      },
+                    });
+                    if (streamFailed || !replayUri) {
+                      // 流式失败或无数据 → 降级非流式
+                      console.warn('Stream TTS failed, falling back to non-stream');
+                      generateAudioFallback(ttsBody, isMuted);
+                    } else if (replayUri) {
+                      setAudioUri(replayUri);
+                    }
+                  } catch {
+                    // 流式失败 → 降级非流式
+                    console.warn('Stream TTS failed, falling back to non-stream');
+                    generateAudioFallback(ttsBody, isMuted);
                   }
-                } catch {
-                  setIsPlaying(false);
-                  setNeedsManualPlay(true);
+                })();
+              }
+            } else {
+              // 非流式 JSON 响应（EdgeOne 降级或 stream=false）
+              const data = await response.json();
+              if (data.audioUri) {
+                setAudioUri(data.audioUri);
+                if (!isMuted) {
+                  setTimeout(() => {
+                    void (async () => {
+                      try {
+                        await playWithWebAudio(data.audioUri, {
+                          onPlay: () => {
+                            setIsPlaying(true);
+                            setNeedsManualPlay(false);
+                          },
+                          onEnded: () => setIsPlaying(false),
+                          onError: () => {
+                            setIsPlaying(false);
+                            setNeedsManualPlay(true);
+                          },
+                        });
+                      } catch {
+                        setIsPlaying(false);
+                        setNeedsManualPlay(true);
+                      }
+                    })();
+                  }, 300);
                 }
-              })();
+              }
             }
           }
         } catch (err) {
-          console.error('TTS error:', err);
+          console.error('TTS stream error:', err);
+        }
+      };
+
+      // 降级：非流式请求
+      const generateAudioFallback = async (
+        ttsBody: { text: string; speaker: string; uid: string },
+        muted: boolean,
+      ) => {
+        try {
+          const response = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...ttsBody, stream: false }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.audioUri) {
+              setAudioUri(data.audioUri);
+              if (!muted) {
+                setTimeout(() => {
+                  void (async () => {
+                    try {
+                      await playWithWebAudio(data.audioUri, {
+                        onPlay: () => {
+                          setIsPlaying(true);
+                          setNeedsManualPlay(false);
+                        },
+                        onEnded: () => setIsPlaying(false),
+                        onError: () => {
+                          setIsPlaying(false);
+                          setNeedsManualPlay(true);
+                        },
+                      });
+                    } catch {
+                      setIsPlaying(false);
+                      setNeedsManualPlay(true);
+                    }
+                  })();
+                }, 300);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('TTS fallback error:', err);
         }
       };
 
