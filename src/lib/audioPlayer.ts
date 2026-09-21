@@ -295,6 +295,21 @@ export async function playTtsStream(
   const allPcmChunks: Uint8Array[] = [];
   const SAMPLE_RATE = 24000;
 
+  // 对 AudioBuffer 头尾施加几毫秒淡入淡出，消除分段播放的爆音
+  const FADE_SAMPLES = 80; // ~3.3ms @ 24kHz
+  const applyFade = (buffer: AudioBuffer) => {
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      const data = buffer.getChannelData(ch);
+      const len = data.length;
+      const fade = Math.min(FADE_SAMPLES, Math.floor(len / 2));
+      for (let i = 0; i < fade; i++) {
+        const ramp = i / fade;
+        data[i] *= ramp;
+        data[len - 1 - i] *= ramp;
+      }
+    }
+  };
+
   const playNext = () => {
     if (queue.length === 0) {
       isPlaying = false;
@@ -305,6 +320,8 @@ export async function playTtsStream(
     }
 
     const buffer = queue.shift()!;
+    applyFade(buffer);
+
     const gain = ctx.createGain();
     gain.gain.value = 1;
     const src = ctx.createBufferSource();
