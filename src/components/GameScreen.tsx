@@ -17,6 +17,7 @@ import {
 import {
   blessAudioOnUserGesture,
   playWithWebAudio,
+  playTtsStream,
   stopActivePlayback,
 } from '@/lib/audioPlayer';
 
@@ -208,81 +209,37 @@ export default function GameScreen() {
           });
 
           if (response.ok) {
-            const data = await response.json();
-            if (data.audioUri) {
-              const uri = data.audioUri;
-              setAudioUri(uri);
-              // ⚠️ 自动播放语音（如果未静音）
-              // 注意：这里是在 await 网络返回后调用，iOS Safari 下依赖
-              // 之前用户手势（开始游戏 / 选选项）里 blessAudioOnUserGesture()
-              // 给全局 AudioContext 的"永久祝福"。一旦祝福过，无论等
-              // 5 秒还是 30 秒，playWithWebAudio() 都能自动开播。
-              if (!isMuted) {
-                setTimeout(() => {
-                  void (async () => {
-                    // 优先 Web Audio API
-                    try {
-                      await playWithWebAudio(uri, {
-                        onPlay: () => {
-                          setIsPlaying(true);
-                          setNeedsManualPlay(false);
-                        },
-                        onEnded: () => setIsPlaying(false),
-                        onError: () => {
-                          setIsPlaying(false);
-                          // Web Audio 失败 → 降级 HTMLAudio
-                          try {
-                            const audio = new Audio(uri);
-                            audioRef.current = audio;
-                            audio.onplay = () => {
-                              setIsPlaying(true);
-                              setNeedsManualPlay(false);
-                            };
-                            audio.onended = () => setIsPlaying(false);
-                            audio.onerror = () => {
-                              setIsPlaying(false);
-                              setNeedsManualPlay(true);
-                            };
-                            audio.play().catch(() => {
-                              setIsPlaying(false);
-                              setNeedsManualPlay(true);
-                            });
-                          } catch {
-                            setNeedsManualPlay(true);
-                          }
-                        },
-                      });
-                    } catch {
-                      // Web Audio 抛错 → 同 onError 降级
-                      try {
-                        const audio = new Audio(uri);
-                        audioRef.current = audio;
-                        audio.onplay = () => {
-                          setIsPlaying(true);
-                          setNeedsManualPlay(false);
-                        };
-                        audio.onended = () => setIsPlaying(false);
-                        audio.onerror = () => {
-                          setIsPlaying(false);
-                          setNeedsManualPlay(true);
-                        };
-                        audio.play().catch(() => {
-                          setIsPlaying(false);
-                          setNeedsManualPlay(true);
-                        });
-                      } catch {
-                        setIsPlaying(false);
-                        setNeedsManualPlay(true);
-                      }
-                    }
-                  })();
-                }, 300);
-              }
+            // 立即标记为"流式播放中"，显示播放按钮
+            setAudioUri('streaming');
+
+            if (!isMuted) {
+              // ⚠️ 流式播放：边接收音频片段边播放，大幅缩短首音延迟
+              void (async () => {
+                try {
+                  const replayUri = await playTtsStream(response, {
+                    onPlay: () => {
+                      setIsPlaying(true);
+                      setNeedsManualPlay(false);
+                    },
+                    onEnded: () => setIsPlaying(false),
+                    onError: () => {
+                      setIsPlaying(false);
+                      setNeedsManualPlay(true);
+                    },
+                  });
+                  // 流结束后，保存完整音频 URI 供重播
+                  if (replayUri) {
+                    setAudioUri(replayUri);
+                  }
+                } catch {
+                  setIsPlaying(false);
+                  setNeedsManualPlay(true);
+                }
+              })();
             }
           }
         } catch (err) {
           console.error('TTS error:', err);
-          // 语音失败不影响游戏
         }
       };
 
@@ -300,7 +257,7 @@ export default function GameScreen() {
 
   // 播放语音（优先 Web Audio API → iOS Safari 整页永久解锁；失败再降级 HTMLAudio）
   const handlePlayAudio = useCallback(async () => {
-    if (!audioUri) return;
+    if (!audioUri || audioUri === 'streaming') return;
 
     // 1) 停止当前播放
     stopActivePlayback();
@@ -354,8 +311,8 @@ export default function GameScreen() {
           audioRef.current = null;
         }
         setIsPlaying(false);
-      } else if (audioUri) {
-        // 取消静音后自动播放当前语音
+      } else if (audioUri && audioUri !== 'streaming') {
+        // 取消静音后自动播放当前语音（流式播放中不重播）
         handlePlayAudio();
       }
       return newMuted;

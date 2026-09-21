@@ -96,9 +96,19 @@ interface ActivePlayback {
 }
 
 let currentPlayback: ActivePlayback | null = null;
+let currentStreamReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
 /** 停止当前播放（切换消息/静音时调用） */
 export function stopActivePlayback(): void {
+  // 取消正在进行的流式读取
+  if (currentStreamReader) {
+    try {
+      currentStreamReader.cancel();
+    } catch {
+      /* ignore */
+    }
+    currentStreamReader = null;
+  }
   if (currentPlayback) {
     try {
       currentPlayback.onEnded = undefined;
@@ -194,4 +204,217 @@ export async function playWithWebAudio(
     handlers.onError?.();
     throw e;
   }
+}
+
+// ====== 流式 TTS 播放 ======
+
+function wrapPcmInWav(
+  pcm: Uint8Array,
+  sampleRate: number,
+  bitsPerSample: number,
+  channels: number,
+): Uint8Array {
+  const byteRate = (sampleRate * channels * bitsPerSample) / 8;
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const dataSize = pcm.length;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+
+  bytes.set([0x52, 0x49, 0x46, 0x46], 0);
+  view.setUint32(4, 36 + dataSize, true);
+  bytes.set([0x57, 0x41, 0x56, 0x45], 8);
+  bytes.set([0x66, 0x6d, 0x74, 0x20], 12);
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  bytes.set([0x64, 0x61, 0x74, 0x61], 36);
+  view.setUint32(40, dataSize, true);
+
+  bytes.set(pcm, 44);
+  return bytes;
+}
+
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+/**
+ * 流式播放 TTS：读取 SSE 响应流，逐段解码播放。
+ *
+ * 返回合并后的 WAV data URI，用于后续重播。
+ */
+export async function playTtsStream(
+  response: Response,
+  handlers: {
+    onPlay?: () => void;
+    onEnded?: () => void;
+    onError?: () => void;
+  } = {},
+): Promise<string | null> {
+  const ctx = getCtx();
+  if (!ctx) throw new Error('AudioContext not available');
+
+  if (ctx.state === 'suspended') {
+    try {
+      await ctx.resume();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  stopActivePlayback();
+
+  const reader = response.body!.getReader();
+  currentStreamReader = reader;
+
+  const decoder = new TextDecoder();
+  let sseBuffer = '';
+  let streamEnded = false;
+
+  const queue: AudioBuffer[] = [];
+  let isPlaying = false;
+  let startedPlaying = false;
+
+  const allPcmChunks: Uint8Array[] = [];
+  const SAMPLE_RATE = 24000;
+
+  const playNext = () => {
+    if (queue.length === 0) {
+      isPlaying = false;
+      if (streamEnded) {
+        handlers.onEnded?.();
+      }
+      return;
+    }
+
+    const buffer = queue.shift()!;
+    const gain = ctx.createGain();
+    gain.gain.value = 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(gain);
+    gain.connect(ctx.destination);
+
+    src.onended = () => {
+      try {
+        src.disconnect();
+        gain.disconnect();
+      } catch {
+        /* ignore */
+      }
+      if (currentPlayback?.source === src) currentPlayback = null;
+      playNext();
+    };
+
+    (src as AudioBufferSourceNode & { onerror?: () => void }).onerror = () => {
+      handlers.onError?.();
+    };
+
+    currentPlayback = { source: src, gain, ...handlers };
+    try {
+      src.start(0);
+      isPlaying = true;
+      if (!startedPlaying) {
+        startedPlaying = true;
+        handlers.onPlay?.();
+      }
+    } catch {
+      handlers.onError?.();
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        streamEnded = true;
+        if (!isPlaying && queue.length === 0) {
+          handlers.onEnded?.();
+        }
+        break;
+      }
+
+      sseBuffer += decoder.decode(value, { stream: true });
+      const lines = sseBuffer.split('\n');
+      sseBuffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const jsonStr = line.slice(5).trim();
+        if (!jsonStr) continue;
+
+        let event: { audio?: string; done?: boolean; error?: string };
+        try {
+          event = JSON.parse(jsonStr);
+        } catch {
+          continue;
+        }
+
+        if (event.error) {
+          handlers.onError?.();
+          return null;
+        }
+
+        if (event.done) {
+          streamEnded = true;
+          if (!isPlaying && queue.length === 0) {
+            handlers.onEnded?.();
+          }
+          continue;
+        }
+
+        if (event.audio) {
+          // base64 WAV → Uint8Array
+          const binaryStr = atob(event.audio);
+          const wavBytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            wavBytes[i] = binaryStr.charCodeAt(i);
+          }
+
+          // 提取 PCM（跳过 44 字节 WAV 头），用于后续重播
+          const pcm = wavBytes.slice(44);
+          if (pcm.length > 0) {
+            allPcmChunks.push(pcm);
+          }
+
+          // 解码 WAV 片段并加入播放队列
+          try {
+            const audioBuffer = await ctx.decodeAudioData(wavBytes.buffer.slice(0));
+            queue.push(audioBuffer);
+            if (!isPlaying) playNext();
+          } catch {
+            // decodeAudioData 可能因片段过小失败，跳过
+          }
+        }
+      }
+    }
+  } catch {
+    handlers.onError?.();
+  } finally {
+    currentStreamReader = null;
+  }
+
+  // 构建完整 WAV data URI，供重播使用
+  if (allPcmChunks.length > 0) {
+    const totalLen = allPcmChunks.reduce((s, c) => s + c.length, 0);
+    const combined = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const chunk of allPcmChunks) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    const wav = wrapPcmInWav(combined, SAMPLE_RATE, 16, 1);
+    return `data:audio/wav;base64,${uint8ToBase64(wav)}`;
+  }
+
+  return null;
 }
