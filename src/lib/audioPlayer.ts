@@ -295,19 +295,33 @@ export async function playTtsStream(
   const allPcmChunks: Uint8Array[] = [];
   const SAMPLE_RATE = 24000;
 
-  // 对 AudioBuffer 头尾施加几毫秒淡入淡出，消除分段播放的爆音
-  const FADE_SAMPLES = 80; // ~3.3ms @ 24kHz
+  // 对 AudioBuffer 头尾施加淡入淡出，消除分段播放的爆音
+  // 余弦曲线比线性更平滑，200 样本 ≈ 8ms @ 24kHz
+  const FADE_SAMPLES = 200;
   const applyFade = (buffer: AudioBuffer) => {
     for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
       const data = buffer.getChannelData(ch);
       const len = data.length;
       const fade = Math.min(FADE_SAMPLES, Math.floor(len / 2));
       for (let i = 0; i < fade; i++) {
-        const ramp = i / fade;
+        const ramp = 0.5 - 0.5 * Math.cos(Math.PI * i / fade);
         data[i] *= ramp;
         data[len - 1 - i] *= ramp;
       }
     }
+  };
+
+  // 从原始 PCM16 数据直接创建 AudioBuffer（绕过 decodeAudioData，避免解码器引入爆音）
+  const pcmToAudioBuffer = (wavBytes: Uint8Array): AudioBuffer | null => {
+    const view = new DataView(wavBytes.buffer);
+    const sampleCount = Math.floor((wavBytes.length - 44) / 2);
+    if (sampleCount <= 0) return null;
+    const audioBuffer = ctx.createBuffer(1, sampleCount, SAMPLE_RATE);
+    const channelData = audioBuffer.getChannelData(0);
+    for (let i = 0; i < sampleCount; i++) {
+      channelData[i] = view.getInt16(44 + i * 2, true) / 32768;
+    }
+    return audioBuffer;
   };
 
   const playNext = () => {
@@ -412,13 +426,11 @@ export async function playTtsStream(
             allPcmChunks.push(pcm);
           }
 
-          // 解码 WAV 片段并加入播放队列
-          try {
-            const audioBuffer = await ctx.decodeAudioData(wavBytes.buffer.slice(0));
+          // 直接从 PCM 创建 AudioBuffer（绕过 decodeAudioData）
+          const audioBuffer = pcmToAudioBuffer(wavBytes);
+          if (audioBuffer) {
             queue.push(audioBuffer);
             if (!isPlaying) playNext();
-          } catch {
-            // decodeAudioData 可能因片段过小失败，跳过
           }
         }
       }
